@@ -44,7 +44,7 @@ export const TtsConfig = z.object({
   }),
 })
 
-// 캐릭터 대화(모델 대꾸). 비워 두면 지금까지처럼 규칙 기반 대사만 쓴다.
+// 캐릭터 대화(모델 대화). 비워 두면 지금까지처럼 규칙 기반 대사만 쓴다.
 // 값의 범위·형식 검사는 요청마다 chat-config normalize가 맡는다.
 export const ChatConfig = z.object({
   enabled: live(z.boolean().default(false)),

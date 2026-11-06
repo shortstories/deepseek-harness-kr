@@ -41,7 +41,7 @@ test("호출지 kind 태깅: TEXT 5곳 reaction, TOOLS 1곳 status", () => {
     'say(text, 0, false, "status")',
   ];
   for (const s of tagged) assert.ok(SRC.includes(s), "호출지 누락: " + s);
-  // 모델 대꾸(혼잣말·결과 요약·직접 대화)도 reaction 으로 태깅한다
+  // 모델 대화(혼잣말·결과 요약·직접 대화)도 reaction 으로 태깅한다
   const model = [
     'speakModel(line, 5000, false, "reaction")',
     'speakModel(reply, Math.min(7000, Math.max(3000, 1200 + reply.length * 45)), false, "reaction")',
@@ -108,7 +108,7 @@ test("말풍선 조건부 유지: 재생 중이면 250ms 재확인, voiceState �
   );
 });
 
-test("모델 대꾸 훅: 상태 조회·역할 판정·태그 분리·우클릭 대화", () => {
+test("모델 대화 훅: 상태 조회·역할 판정·태그 분리·우클릭 대화", () => {
   // 호스트 라우트 (플러그인 자신의 경로만 쓴다)
   assert.ok(SRC.includes('const CHAT_STATE_URL = "/deepseek-harness-kr/chat/state";'), "상태 라우트");
   assert.ok(SRC.includes('const CHAT_URL = "/deepseek-harness-kr/chat";'), "대화 라우트");

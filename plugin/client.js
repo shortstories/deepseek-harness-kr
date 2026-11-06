@@ -535,7 +535,7 @@ function TtsSection({ form, keys, ko, writable, tts }) {
     error ? React.createElement('p', { role: 'alert' }, error) : null)
 }
 
-// 캐릭터 대꾸: 규칙 기반 반응은 그대로 두고, 켜면 혼잣말·결과 요약·직접 대화만 모델이 맡는다.
+// 캐릭터 대화: 규칙 기반 반응은 그대로 두고, 켜면 혼잣말·결과 요약·직접 대화만 모델이 맡는다.
 function ChatSection({ form, keys, ko, writable, chat }) {
   const [error, setError] = React.useState('')
   const t = (k, e) => (ko ? k : e)
@@ -560,10 +560,10 @@ function ChatSection({ form, keys, ko, writable, chat }) {
       ...options.map(([optionValue, optionLabel]) => React.createElement('option', { key: optionValue, value: optionValue }, optionLabel))))
   const source = v.source === 'session' ? 'session' : 'api'
   const serverDefault = t('비우면 서버 기본값', 'Empty = server default')
-  return React.createElement('section', { 'aria-label': t('캐릭터 대꾸', 'Character replies'), style: sectionStyle },
+  return React.createElement('section', { 'aria-label': t('캐릭터 대화', 'Character chat'), style: sectionStyle },
     React.createElement('div', { style: toggleRow },
-      React.createElement('strong', null, t('캐릭터 대꾸', 'Character replies')),
-      React.createElement('input', { type: 'checkbox', 'aria-label': t('모델로 대꾸하기', 'Reply with a model'), checked: v.enabled === true, disabled: off, onChange: (event) => write(['enabled'], event.target.checked) })),
+      React.createElement('strong', null, t('캐릭터 대화', 'Character chat')),
+      React.createElement('input', { type: 'checkbox', 'aria-label': t('모델로 대화하기', 'Chat with a model'), checked: v.enabled === true, disabled: off, onChange: (event) => write(['enabled'], event.target.checked) })),
     React.createElement('p', { style: { margin: 0, opacity: 0.7 } },
       t('켜면 혼잣말·결과 요약·직접 대화를 모델이 맡습니다. 터치 반응과 작업 상태 대사는 지금처럼 규칙대로 움직입니다.',
         'When on, the model handles mutters, result summaries and direct chat. Touch reactions and tool status lines stay rule-based.')),
@@ -817,7 +817,7 @@ function apply(ctx) {
       window.__dscIntro = { enabled: value.intro !== false }
     }
     life.add(() => { delete window.__dscOutfit; delete window.__dscSleep; delete window.__dscIntro })
-    // 지금 보고 있는 세션 id: 캐릭터가 "이 세션의 모델을 빌려" 대꾸할 때 쓴다.
+    // 지금 보고 있는 세션 id: 캐릭터가 "이 세션의 모델을 빌려" 대화할 때 쓴다.
     // uiSession은 늦게 뜰 수 있어 inject로 기다린다 (없으면 세션 모델 빌리기만 못 쓴다).
     if (typeof ctx.inject === 'function') {
       ctx.inject(['uiSession'], (scope) => {

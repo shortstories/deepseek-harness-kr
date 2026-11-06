@@ -463,7 +463,7 @@ export function registerChatRoutes(ctx, read, deps = {}) {
       for (const [path, handler] of handlers) cleanups.push(ctx.webServer.register({ kind: 'exact', path, handler }))
     } catch {
       for (const cleanup of cleanups.reverse()) cleanup?.()
-      console.warn('캐릭터 대화 초기화 실패: 모델 대꾸를 비활성화합니다.')
+      console.warn('캐릭터 대화 초기화 실패: 모델 대화를 비활성화합니다.')
       return
     }
     return () => { for (const cleanup of cleanups.reverse()) cleanup?.() }

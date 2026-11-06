@@ -2022,7 +2022,7 @@
           if (!petPanelOpen && !walking() && overBody(e.clientX, e.clientY)) PET.menu();
           return;
         }
-        // 창 안: 캐릭터를 우클릭하면 말을 거는 입력 말풍선을 연다 (모델 대꾸가 켜져 있을 때만)
+        // 창 안: 캐릭터를 우클릭하면 말을 거는 입력 말풍선을 연다 (모델 대화가 켜져 있을 때만)
         if (!chatReady("chat") || walking() || !overBody(e.clientX, e.clientY)) return;
         e.preventDefault();
         e.stopPropagation();
@@ -2185,7 +2185,7 @@
         petPanel.classList.remove("show");
       }
 
-      // ---------- 모델 대꾸 (플러그인 호스트의 /deepseek-harness-kr/chat) ----------
+      // ---------- 모델 대화 (플러그인 호스트의 /deepseek-harness-kr/chat) ----------
       // 규칙 기반 반응은 그대로 두고, 켜져 있으면 혼잣말·결과 요약·직접 대화만 모델이 맡는다.
       // 펫 창은 dscpet:// 로 떠서 호스트에 닿지 않으므로 모델 기능은 창 안 캐릭터에서만 쓴다.
       const CHAT_STATE_URL = "/deepseek-harness-kr/chat/state";
@@ -2225,8 +2225,10 @@
         if (body.trim()) say(body.trim(), ms, mutter, kind);
       };
       const modelMutter = async (raw) => {
-        const line = await chatRequest("mutter", raw);
+        let line = await chatRequest("mutter", raw);
         if (!line) return false;
+        // 혼잣말은 한 숨에 읽히는 길이로 자른다 (규칙 기반 thoughtLine 과 같은 42자 기준)
+        if (line.length > 42) line = line.slice(0, 40).trimEnd() + "…";
         const now = performance.now();
         if (now - lastMutterAt < 6000 || now - lastSayAt < 2500) return true;
         lastMutterAt = now;
