@@ -125,10 +125,9 @@ test("모델 대화 훅: 상태 조회·역할 판정·태그 분리·우클릭 
   assert.ok(SRC.includes('if (!chatReady("chat") || walking() || !overBody(e.clientX, e.clientY)) return;'), "우클릭 조건");
   assert.ok(SRC.includes("openChat();"), "입력 말풍선 열기");
   assert.ok(SRC.includes('root.id = "dsc-chat";'), "입력 말풍선 요소");
-  // 혼잣말은 규칙 기반과 같은 42자 기준으로 자른다 (모델이 길게 주는 경우)
-  assert.ok(SRC.includes('if (line.length > 42) line = line.slice(0, 40).trimEnd() + "…";'), "혼잣말 길이 제한");
-  // 결과 요약도 지시문과 같은 60자 기준으로 자른다
-  assert.ok(SRC.includes('if (line.length > 60) line = line.slice(0, 58).trimEnd() + "…";'), "요약 길이 제한");
+  // 길이는 지시문보다 느슨하게: 넘칠 때만 …로 줄인다 (문장을 잘라 어색해지지 않게)
+  assert.ok(SRC.includes('if (line.length > 60) line = line.slice(0, 58).trimEnd() + "…";'), "혼잣말 길이 제한");
+  assert.ok(SRC.includes('if (line.length > 90) line = line.slice(0, 88).trimEnd() + "…";'), "요약 길이 제한");
   // 세션 모델 빌리기: 지금 보고 있는 세션 id 를 함께 보낸다
   assert.ok(SRC.includes("if (typeof window.__dscSessionId === \"string\" && window.__dscSessionId) body.sessionId = window.__dscSessionId;"), "세션 id 전달");
 });

@@ -112,7 +112,7 @@ test('api source posts the role prompt and returns the reply text', async () => 
     const body = upstream.stats.bodies[0]
     assert.equal(body.model, 'lfm3')
     assert.equal(body.messages[0].role, 'system')
-    assert.match(body.messages[0].content, /42자 이내/)
+    assert.match(body.messages[0].content, /60자를 넘기지 않게/)
     assert.deepEqual(body.messages.slice(1), [{ role: 'user', content: 'The user asked for a summary.' }])
     assert.deepEqual(body.stop, ['<|im_end|>', '<|endoftext|>'])
     assert.equal(body.max_tokens, 80)
@@ -190,7 +190,7 @@ test('session source borrows the route of a live session and writes nothing to i
     assert.deepEqual(seen[0].config, { provider: 'deepseek-official', model: 'deepseek-flash', maxTokens: 80 })
     assert.equal(seen[1].options.reasoningEffort, 'off')
     assert.equal(seen[1].options.sessionId, 's1')
-    assert.match(seen[1].options.system, /42자 이내/)
+    assert.match(seen[1].options.system, /60자를 넘기지 않게/)
   } finally { await host.close() }
 })
 
