@@ -2017,9 +2017,16 @@
       // 우클릭은 집어 옮기기의 보조 버튼이라, 끄는 중에는 메뉴를 열지 않는다 (펫 창에서는 놓은 뒤에만 메뉴)
       document.addEventListener("contextmenu", (e) => {
         if (drag.pending || drag.on) { e.preventDefault(); e.stopPropagation(); return; }
-        if (!PET) return;
+        if (PET) {
+          e.preventDefault();
+          if (!petPanelOpen && !walking() && overBody(e.clientX, e.clientY)) PET.menu();
+          return;
+        }
+        // 창 안: 캐릭터를 우클릭하면 말을 거는 입력 말풍선을 연다 (모델 대꾸가 켜져 있을 때만)
+        if (!chatReady("chat") || walking() || !overBody(e.clientX, e.clientY)) return;
         e.preventDefault();
-        if (!petPanelOpen && !walking() && overBody(e.clientX, e.clientY)) PET.menu();
+        e.stopPropagation();
+        openChat();
       }, true);
       // 휠로 크기 조절: 몸 위에서 올리면 커지고 내리면 작아짐 (몸 아래 가운데를 기준으로). 들고 있을 때·움직이는 중·산책·도망 중엔 무시
       //   펫 창 = 0.45배 ~ 화면에 들어가는 크기 (넘겨받을 때는 HEAD_GAIN으로 머리 크기를 창 안과 맞춤)
@@ -2178,6 +2185,129 @@
         petPanel.classList.remove("show");
       }
 
+      // ---------- 모델 대꾸 (플러그인 호스트의 /deepseek-harness-kr/chat) ----------
+      // 규칙 기반 반응은 그대로 두고, 켜져 있으면 혼잣말·결과 요약·직접 대화만 모델이 맡는다.
+      // 펫 창은 dscpet:// 로 떠서 호스트에 닿지 않으므로 모델 기능은 창 안 캐릭터에서만 쓴다.
+      const CHAT_STATE_URL = "/deepseek-harness-kr/chat/state";
+      const CHAT_URL = "/deepseek-harness-kr/chat";
+      const CHAT_TAG = /^\[([^\]]{1,24})\]\s*/;
+      const chat = { state: null, loading: false, history: [], busy: false, panel: null, input: null, log: null, open: false };
+      const chatReady = (role) => !PET && chat.state?.enabled === true && chat.state.roles?.[role] === true;
+      const loadChatState = () => {
+        if (PET || chat.loading) return;
+        chat.loading = true;
+        fetch(CHAT_STATE_URL, { headers: { accept: "application/json" } })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((s) => { chat.state = s && typeof s === "object" ? s : null; })
+          .catch(() => { chat.state = null; })
+          .finally(() => { chat.loading = false; });
+      };
+      loadChatState();
+      setInterval(loadChatState, 30000);   // 설정에서 켜고 끄면 30초 안에 따라온다
+      const chatRequest = async (mode, text, history) => {
+        if (!chatReady(mode)) return null;
+        const body = { mode, text };
+        if (mode === "chat" && history?.length) body.history = history;
+        if (typeof window.__dscSessionId === "string" && window.__dscSessionId) body.sessionId = window.__dscSessionId;
+        try {
+          const r = await fetch(CHAT_URL, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+          if (!r.ok) { if (r.status === 404 || r.status === 503) chat.state = null; return null; }
+          const data = await r.json();
+          return typeof data?.text === "string" && data.text.trim() ? data.text.trim() : null;
+        } catch { return null; }
+      };
+      // 모델 답변은 "[홍조] 본문" 형태다. 태그는 표정으로 바꾸고 본문만 말한다 (say는 태그를 모른다).
+      const speakModel = (text, ms, mutter, kind) => {
+        let body = text, tag = null;
+        const m = body.match(CHAT_TAG);
+        if (m) { tag = m[1]; body = body.slice(m[0].length); }
+        if (tag) for (const n of tag.split(",")) { const e = EXP_NAME[n.trim()]; if (e) flashExp(e, Math.max(1200, ms || 3000)); }
+        if (body.trim()) say(body.trim(), ms, mutter, kind);
+      };
+      const modelMutter = async (raw) => {
+        const line = await chatRequest("mutter", raw);
+        if (!line) return false;
+        const now = performance.now();
+        if (now - lastMutterAt < 6000 || now - lastSayAt < 2500) return true;
+        lastMutterAt = now;
+        speakModel(line, Math.min(5200, Math.max(3800, 1500 + line.length * 55)), true);
+        if (Math.random() < 0.35) play("tilt", 1600);
+        return true;
+      };
+      // 방금 끝난 턴의 답변 본문 (요약 재료)
+      const lastAnswerText = () => {
+        const rows = [...document.querySelectorAll('[data-chat-flow-kind="assistant-step"]')];
+        const row = rows.pop();
+        return row ? (row.innerText || "").trim().slice(0, 4000) : "";
+      };
+      const modelSummary = async () => {
+        const answer = lastAnswerText();
+        if (!answer) return false;
+        const line = await chatRequest("summary", answer);
+        if (!line) return false;
+        speakModel(line, 5000, false, "reaction");
+        return true;
+      };
+      // ---------- 직접 대화: 우클릭 → 입력 말풍선 ----------
+      const appendChat = (who, text) => {
+        if (!chat.log) return;
+        // 줄마다 정리 목록에 쌓이지 않도록 요소를 직접 만들지 않고 붙인다 (패널 하나만 정리 대상)
+        chat.log.insertAdjacentHTML("beforeend", '<div class="dsc-chat-line ' + who + '"></div>');
+        const line = chat.log.lastElementChild;
+        if (line) line.textContent = text;
+        chat.log.scrollTop = chat.log.scrollHeight;
+      };
+      const sendChat = async () => {
+        if (!chat.input || chat.busy) return;
+        const text = chat.input.value.trim();
+        if (!text) return;
+        chat.input.value = "";
+        appendChat("me", text);
+        chat.busy = true;
+        const reply = await chatRequest("chat", text, chat.history);
+        chat.busy = false;
+        if (!reply) { appendChat("her", "지금은 대답을 못 했어요. 잠시 뒤에 다시 말 걸어 주세요."); return; }
+        chat.history.push({ role: "user", content: text }, { role: "assistant", content: reply });
+        if (chat.history.length > 20) chat.history = chat.history.slice(-20);
+        appendChat("her", reply);
+        speakModel(reply, Math.min(7000, Math.max(3000, 1200 + reply.length * 45)), false, "reaction");
+      };
+      const buildChatPanel = () => {
+        const root = document.createElement("div");
+        root.id = "dsc-chat";
+        root.setAttribute("role", "dialog");
+        root.setAttribute("aria-label", "딥시크쨩에게 말 걸기");
+        root.innerHTML = [
+          '<div class="dsc-chat-head"><strong>딥시크쨩</strong><button type="button" data-close aria-label="닫기">×</button></div>',
+          '<div class="dsc-chat-log" data-log aria-live="polite"></div>',
+          '<form class="dsc-chat-form" data-form>',
+          '<input type="text" data-input maxlength="500" autocomplete="off" placeholder="말을 걸어 보세요">',
+          '<button type="submit" data-send>보내기</button>',
+          '</form>',
+        ].join("");
+        document.body.append(root);
+        chat.input = root.querySelector("[data-input]");
+        chat.log = root.querySelector("[data-log]");
+        root.querySelector("[data-form]").addEventListener("submit", (e) => { e.preventDefault(); void sendChat(); });
+        root.querySelector("[data-close]").addEventListener("click", () => closeChat());
+        return root;
+      };
+      const openChat = () => {
+        if (PET) return;
+        if (!chat.panel) chat.panel = buildChatPanel();
+        chat.panel.classList.add("show");
+        chat.open = true;
+        if (!chat.state) loadChatState();
+        if (chat.log && !chat.log.childElementCount) appendChat("her", "네, 주인님. 뭐든 말씀해 주세요.");
+        try { chat.input?.focus({ preventScroll: true }); } catch {}
+      };
+      const closeChat = () => { if (!chat.panel) return; chat.panel.classList.remove("show"); chat.open = false; };
+      document.addEventListener("pointerdown", (e) => {
+        if (!chat.open || !chat.panel || chat.panel.contains(e.target)) return;
+        closeChat();
+      }, true);
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape" && chat.open) closeChat(); }, true);
+
       // ---------- Harness 상태 → 반응 ----------
       listeners.tool = (text) => {
         const now = performance.now();
@@ -2241,6 +2371,8 @@
         lastThought = raw;
         const now = performance.now();
         if (now - lastMutterAt < 6000 || now - lastSayAt < 2500) return;
+        // 모델이 켜져 있으면 추론 요약을 그대로 넘겨 한국어 한 문장으로 받는다 (규칙 변환은 실패했을 때만)
+        if (chatReady("mutter")) { void modelMutter(raw); return; }
         const line = thoughtLine(raw);
         if (!line) return;
         lastMutterAt = now;
@@ -2297,6 +2429,11 @@
             else if (ev.type === "attach" || ev.type === "closed" || ev.type === "error") { link.follow = null; leaveLink(); }
             else if (ev.type === "hidden" && link.open) leaveLink();
             else if (ev.type === "hidden" && link.follow?.shown) link.follow.shown = false;   // 따라오던 펫 창이 숨음 → 창 안 캐릭터가 다시 보이게
+            else if (ev.type === "chat") {   // 펫 창 우클릭 메뉴 "대화하기…": 창 안으로 돌아와 입력 말풍선을 연다
+              link.follow = null;
+              leaveLink();
+              setTimeout(() => { if (!link.open) openChat(); }, 260);
+            }
             else if (ev.type === "config" && Array.isArray(ev.list)) {   // 펫 창 우클릭 메뉴·설정 패널에서 바꾼 값
               for (const pair of ev.list) if (Array.isArray(pair) && pair.length === 2 && typeof pair[0] === "string") {
                 try { window.__dscSetConfig?.(pair[0], pair[1]); } catch {}
@@ -2449,6 +2586,10 @@
           setTimeout(() => {   // 실패 문구가 늦게 그려질 수 있어 잠깐 기다림
             if (running) return;
             if (performance.now() - lastError < 8000) { flashExp("tears", 5000); flashExp("dizzy", 2500); say(TEXT.error, 5000, false, "reaction"); setMood("sad", 5000); play("droop", 2000); }
+            else if (chatReady("summary")) {   // 결과 요약도 모델이 맡는다 (실패하면 규칙 대사로)
+              setMood("idle"); play("laugh", 1700);
+              void modelSummary().then((ok) => { if (!ok) { flashExp("heart", 4000); flashExp("blush", 4000); say(TEXT.done, 4000, false, "reaction"); } });
+            }
             else { flashExp("heart", 4000); flashExp("blush", 4000); say(TEXT.done, 4000, false, "reaction"); setMood("idle"); play("laugh", 1700); }
           }, 600);
         }

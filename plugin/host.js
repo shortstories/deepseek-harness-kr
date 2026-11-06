@@ -5,9 +5,11 @@ import { extname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { pipeline } from 'node:stream/promises'
 import { normalize as normalizeTts } from '../plugins/dsh-tts/src/config.js'
-import { registerSpeechRoutes } from '../plugins/dsh-tts/src/index.js'
+import { credentialResolver, registerSpeechRoutes } from '../plugins/dsh-tts/src/index.js'
 import { createPetHandler, createPetManager, PET_PATH } from './pet-host.js'
 import { applyShortcutIcon } from './app-icon.js'
+import { normalizeChat } from './chat-config.js'
+import { registerChatRoutes } from './chat-host.js'
 
 export const name = 'deepseek-harness-kr'
 export const inject = ['webServer', 'connection']
@@ -42,6 +44,38 @@ export const TtsConfig = z.object({
   }),
 })
 
+// 캐릭터 대화(모델 대꾸). 비워 두면 지금까지처럼 규칙 기반 대사만 쓴다.
+// 값의 범위·형식 검사는 요청마다 chat-config normalize가 맡는다.
+export const ChatConfig = z.object({
+  enabled: live(z.boolean().default(false)),
+  // 'api'는 OpenAI 호환 엔드포인트, 'session'은 지금 열려 있는 세션의 모델·thinking을 그대로 빌려 쓴다.
+  source: live(z.union([z.const('api'), z.const('session')]).default('api')),
+  openai: z.object({
+    baseUrl: live(z.string().default('')),
+    model: live(z.string().default('')),
+    // API 키 자체가 아니라 credentials 참조 이름. 저장된 키가 먼저, 없으면 같은 이름의 환경변수.
+    apiKeyEnv: live(z.string().role('credential-ref').default('DSH_CHAT_API_KEY')),
+    timeoutMs: live(z.number().min(1000).max(600000).step(1).default(20000)),
+    // null이면 역할별 기본값(혼잣말 0.7, 요약·대화 0.6)을 쓴다.
+    temperature: live(z.union([z.const(null), z.number().min(0).max(2).step(0.05)]).default(null)),
+  }),
+  session: z.object({
+    // 세션 모델의 추론 강도. 'off'면 thinking 없이 답한다. ''면 모델 기본값.
+    reasoningEffort: live(z.string().default('off')),
+  }),
+  roles: z.object({
+    mutter: live(z.boolean().default(true)),
+    summary: live(z.boolean().default(true)),
+    chat: live(z.boolean().default(true)),
+  }),
+  // 비워 두면 내장 프롬프트(학습에 쓴 문구)를 쓴다.
+  prompts: z.object({
+    mutter: live(z.string().default('')),
+    summary: live(z.string().default('')),
+    chat: live(z.string().default('')),
+  }),
+})
+
 // volatile 참조(.get())가 섞인 설정을 그 시점의 평범한 값으로 바꾼다.
 export function readLive(value) {
   if (value && typeof value.get === 'function') return structuredClone(value.get())
@@ -62,6 +96,7 @@ export const Config = z.object({
   tailHide: z.boolean().default(false).volatile(),
   bodyType: z.union([z.const('default'), z.const('type1'), z.const('type2')]).default('default').volatile(),
   tts: TtsConfig,
+  chat: ChatConfig,
   // 시작할 때 가운데에서 크게 인사하는 등장 연출 (끄면 처음부터 제자리에 뜬다)
   intro: z.boolean().default(true).volatile(),
   // 앱 바로가기 아이콘을 DeepSeek짱 아이콘으로 (Windows만, 창·작업 표시줄 아이콘은 해당 없음)
@@ -114,6 +149,8 @@ export function apply(ctx, config) {
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: ASSET_PATH, handler: createAssetHandler() }), 'deepseek-harness-kr: assets')
   // 말풍선 음성: 설정 화면에서 바꾼 값(volatile)을 요청마다 다시 읽는다. 꺼져 있으면 404.
   registerSpeechRoutes(ctx, () => normalizeTts(readLive(config?.tts)))
+  // 캐릭터 대화: 같은 방식으로 요청마다 설정을 다시 읽는다. 꺼져 있으면 404.
+  registerChatRoutes(ctx, () => normalizeChat(readLive(config?.chat)), { resolveApiKey: credentialResolver(ctx) })
   ctx.effect(() => {
     const pet = createPetManager({ assets })
     const rejection = (req) => { const c = ctx.connection; return typeof c?.requestRejection === 'function' ? c.requestRejection(req) : 503 }

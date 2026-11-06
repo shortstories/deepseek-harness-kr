@@ -132,6 +132,7 @@ app.whenReady().then(() => {
       case 'menu': {
         const size = Number(menuState.size) || 1, outfit = menuState.outfit || {}
         Menu.buildFromTemplate([
+          { label: '대화하기…', click: () => { toPage({ type: 'home' }); toHost({ type: 'chat' }) } },
           { label: '설정…', click: () => toPage({ type: 'panel', open: true }) },
           { label: '크기', submenu: [
             ...MENU_SIZES.map((r) => ({ label: `${Math.round(r * 100)}%`, type: 'radio', checked: Math.abs(size - r) < 0.02, click: () => toPage({ type: 'size', ratio: r }) })),

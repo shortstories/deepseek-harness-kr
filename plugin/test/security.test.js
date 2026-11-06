@@ -7,6 +7,7 @@ import { registerSpeechRoutes } from '../../plugins/dsh-tts/src/index.js'
 import { normalize } from '../../plugins/dsh-tts/src/config.js'
 import { apply, ASSET_PATH, Config } from '../host.js'
 import { createPetManager, PET_PATH } from '../pet-host.js'
+import { CHAT_ROUTE, CHAT_STATE_ROUTE } from '../chat-host.js'
 
 const response = () => ({ writeHead(code) { this.status = code }, end() { this.ended = true } })
 
@@ -44,7 +45,7 @@ test('invalid TTS initialization and partial registration preserve assets and pe
       routes.set(route.path, route.handler); return () => routes.delete(route.path)
     } } }
     assert.doesNotThrow(() => apply(ctx, { tts: { enabled: true, openai: { timeoutMs: partial ? 30000 : 601000 } } }))
-    assert.deepEqual([...routes.keys()], [ASSET_PATH, PET_PATH])
+    assert.deepEqual([...routes.keys()], [ASSET_PATH, CHAT_STATE_ROUTE, CHAT_ROUTE, PET_PATH])
     disposers.reverse().forEach((fn) => fn?.()); assert.equal(routes.size, 0)
   }
 })

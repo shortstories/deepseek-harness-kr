@@ -349,6 +349,7 @@ function createUpdater({ fetch: fetchImpl = (...args) => window.fetch(...args), 
 /* TTS_CLIENT */
 
 const DEFAULT_KEY_REF = 'DSH_TTS_API_KEY'
+const DEFAULT_CHAT_KEY_REF = 'DSH_CHAT_API_KEY'
 
 // 이 기능이 붙어 있는 동안만 dsc:say를 듣는다. 늦게 끝난 초기화는 feature.add가 바로 정리한다.
 function mountTts(feature) {
@@ -364,9 +365,9 @@ function ttsSignature(value) {
 }
 
 // API 키는 Harness credentials에 저장한다. 화면은 "설정됨" 여부만 알고 값은 받지 않는다.
-function createKeyStore() {
+function createKeyStore(defaultRef = DEFAULT_KEY_REF) {
   const listeners = new Set()
-  let remote = null, ref = DEFAULT_KEY_REF, generation = 0
+  let remote = null, ref = defaultRef, generation = 0
   let snapshot = { available: false, configured: false, source: null }
   const set = (next) => { snapshot = next; for (const fn of [...listeners]) fn() }
   const refresh = async () => {
@@ -383,7 +384,7 @@ function createKeyStore() {
     subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn) },
     getSnapshot: () => snapshot,
     get ref() { return ref },
-    setRef(next) { const name = typeof next === 'string' ? next : DEFAULT_KEY_REF; if (name !== ref) { ref = name; refresh() } },
+    setRef(next) { const name = typeof next === 'string' ? next : defaultRef; if (name !== ref) { ref = name; refresh() } },
     attach(next) { remote = next; refresh() },
     detach() { remote = null; generation++; set({ available: false, configured: false, source: null }) },
     changed(name) { if (name === ref) refresh() },
@@ -534,6 +535,76 @@ function TtsSection({ form, keys, ko, writable, tts }) {
     error ? React.createElement('p', { role: 'alert' }, error) : null)
 }
 
+// 캐릭터 대꾸: 규칙 기반 반응은 그대로 두고, 켜면 혼잣말·결과 요약·직접 대화만 모델이 맡는다.
+function ChatSection({ form, keys, ko, writable, chat }) {
+  const [error, setError] = React.useState('')
+  const t = (k, e) => (ko ? k : e)
+  const v = chat ?? {}, openai = v.openai ?? {}, session = v.session ?? {}, roles = v.roles ?? {}
+  const off = !writable || typeof form.mutate !== 'function'
+  const write = async (path, value) => {
+    setError('')
+    try {
+      if (await form.mutate([{ op: 'set', path: ['chat', ...path], value }])) return ''
+    } catch {}
+    const failed = t('설정을 저장하지 못했습니다.', 'Could not save settings.')
+    setError(failed)
+    return failed
+  }
+  const text = (path, label, extra = {}) => React.createElement(TtsField, { key: path.join('.'), label, disabled: off, commit: (draft) => write(path, draft.trim()), ...extra })
+  const check = (path, label, checked) => React.createElement('label', { key: path.join('.'), style: toggleRow },
+    React.createElement('span', null, label),
+    React.createElement('input', { type: 'checkbox', checked, disabled: off, onChange: (event) => write(path, event.target.checked) }))
+  const choice = (path, label, value, options) => React.createElement('label', { key: path.join('.'), style: fieldStyle },
+    React.createElement('span', null, label),
+    React.createElement('select', { style: inputStyle, value, disabled: off, onChange: (event) => write(path, event.target.value) },
+      ...options.map(([optionValue, optionLabel]) => React.createElement('option', { key: optionValue, value: optionValue }, optionLabel))))
+  const source = v.source === 'session' ? 'session' : 'api'
+  const serverDefault = t('비우면 서버 기본값', 'Empty = server default')
+  return React.createElement('section', { 'aria-label': t('캐릭터 대꾸', 'Character replies'), style: sectionStyle },
+    React.createElement('div', { style: toggleRow },
+      React.createElement('strong', null, t('캐릭터 대꾸', 'Character replies')),
+      React.createElement('input', { type: 'checkbox', 'aria-label': t('모델로 대꾸하기', 'Reply with a model'), checked: v.enabled === true, disabled: off, onChange: (event) => write(['enabled'], event.target.checked) })),
+    React.createElement('p', { style: { margin: 0, opacity: 0.7 } },
+      t('켜면 혼잣말·결과 요약·직접 대화를 모델이 맡습니다. 터치 반응과 작업 상태 대사는 지금처럼 규칙대로 움직입니다.',
+        'When on, the model handles mutters, result summaries and direct chat. Touch reactions and tool status lines stay rule-based.')),
+    choice(['source'], t('모델 연결', 'Model source'), source, [
+      ['api', t('OpenAI 호환 API', 'OpenAI-compatible API')],
+      ['session', t('지금 세션의 모델 빌리기', 'Borrow this session’s model')],
+    ]),
+    source === 'api'
+      ? ttsGroup(t('연결', 'Connection'),
+        text(['openai', 'baseUrl'], t('API 주소', 'API address'), { value: openai.baseUrl, placeholder: 'http://127.0.0.1:11300/v1', hint: t('/v1까지 입력 (OpenAI 호환)', 'Up to /v1 (OpenAI-compatible)') }),
+        text(['openai', 'model'], t('모델 이름', 'Model name'), { value: openai.model, placeholder: serverDefault }),
+        React.createElement(TtsKeyField, { key: 'chat-key', keys, ko, disabled: off }),
+        text(['openai', 'apiKeyEnv'], t('API 키 저장 이름', 'API key name'), { value: openai.apiKeyEnv ?? DEFAULT_CHAT_KEY_REF, hint: t('저장된 키를 먼저 쓰고, 없으면 같은 이름의 환경변수를 씁니다. 비우면 인증 없이 요청합니다.', 'A saved key is used first, then the environment variable of the same name. Empty sends no authorization.') }))
+      : ttsGroup(t('세션 모델', 'Session model'),
+        React.createElement('p', { style: { margin: 0, opacity: 0.7 } },
+          t('지금 열려 있는 대화 세션의 provider·모델을 그대로 빌려 씁니다. API 주소도 키도 필요 없고, 세션 기록에는 아무것도 남기지 않습니다.',
+            'Borrows the provider and model of the open chat session. No address or key is needed, and nothing is written to the session log.')),
+        choice(['session', 'reasoningEffort'], t('추론 강도', 'Reasoning effort'), session.reasoningEffort ?? 'off', [
+          ['off', t('끄기 (빠름)', 'Off (fast)')],
+          ['low', 'low'],
+          ['high', 'high'],
+          ['max', 'max'],
+          ['', t('모델 기본값', 'Model default')],
+        ])),
+    ttsGroup(t('맡길 일', 'Roles'),
+      check(['roles', 'mutter'], t('추론 중 혼잣말', 'Mutter while reasoning'), roles.mutter !== false),
+      check(['roles', 'summary'], t('작업이 끝나면 결과 요약', 'Summarize the finished result'), roles.summary !== false),
+      check(['roles', 'chat'], t('우클릭으로 말 걸기', 'Right-click to talk'), roles.chat !== false)),
+    React.createElement('details', { style: groupStyle },
+      React.createElement('summary', { style: groupTitleStyle }, t('고급', 'Advanced')),
+      React.createElement('div', { style: { display: 'grid', gap: 10, paddingTop: 4 } },
+        text(['openai', 'timeoutMs'], t('응답 대기 시간 (ms)', 'Response timeout (ms)'), { type: 'number', min: 1000, max: 120000, step: 1000, value: openai.timeoutMs === undefined ? '' : String(openai.timeoutMs), commit: (draft) => { const n = Number(draft); return Number.isInteger(n) && n >= 1000 && n <= 120000 ? write(['openai', 'timeoutMs'], n) : t('1000~120000 사이의 정수를 넣어 주세요.', 'Enter a whole number from 1000 to 120000.') } }),
+        text(['prompts', 'mutter'], t('혼잣말 지시문 (비우면 기본값)', 'Mutter prompt (empty = built-in)'), { multiline: true, value: v.prompts?.mutter, hint: t('학습에 쓴 문구와 같아야 결과가 안정적입니다.', 'Keep this identical to the training prompt for stable results.') }),
+        text(['prompts', 'summary'], t('요약 지시문 (비우면 기본값)', 'Summary prompt (empty = built-in)'), { multiline: true, value: v.prompts?.summary }),
+        text(['prompts', 'chat'], t('대화 지시문 (비우면 기본값)', 'Chat prompt (empty = built-in)'), { multiline: true, value: v.prompts?.chat }))),
+    React.createElement('p', { style: { margin: 0, opacity: 0.7 } },
+      t('대화 내용은 위 주소(또는 세션 모델)로 전송됩니다. 캐릭터는 대화를 저장하지 않고, 창을 닫으면 짧은 기억도 사라집니다.',
+        'Conversation text is sent to the address above (or the session model). The character stores nothing, and its short memory is gone when the window closes.')),
+    error ? React.createElement('p', { role: 'alert' }, error) : null)
+}
+
 function updateSection(updater, ko) {
   const s = updater.getSnapshot()
   const t = (k, e) => (ko ? k : e)
@@ -567,7 +638,7 @@ function updateSection(updater, ko) {
         ? button(t('다시 확인', 'Check again'), () => updater.check(), busy) : null))
 }
 
-function settingsPage(ctx, form, updater, keys) {
+function settingsPage(ctx, form, updater, keys, chatKeys) {
   return function FeatureSettings({ view }) {
     const state = React.useSyncExternalStore((fn) => form.subscribe(fn), () => form.getSnapshot(), () => form.getSnapshot())
     const locale = React.useSyncExternalStore((fn) => ctx.locale.subscribe(fn), () => ctx.locale.getLocale(), () => ctx.locale.getLocale())
@@ -658,6 +729,7 @@ function settingsPage(ctx, form, updater, keys) {
             : 'Click the field, then press the keys you want. Esc cancels, Backspace clears.')),
       error ? React.createElement('p', { role: 'alert' }, error) : null,
       React.createElement(TtsSection, { form, keys, ko, writable: state.writable, tts: state.value?.tts }),
+      React.createElement(ChatSection, { form, keys: chatKeys, ko, writable: state.writable, chat: state.value?.chat }),
       updateSection(updater, ko))
   }
 }
@@ -685,6 +757,7 @@ function apply(ctx) {
     const form = ctx.configForms.get(ENTRY_ID)
     const updater = createUpdater()
     const keys = createKeyStore()
+    const chatKeys = createKeyStore(DEFAULT_CHAT_KEY_REF)
     // 바깥 펫 창의 우클릭 메뉴·설정 패널이 보내는 값을 설정에 반영한다. 이 플러그인이 아는 키만 받는다.
     const PET_CONFIG_KEYS = new Set([...OUTFIT_FIELDS.map(([field]) => field), 'bodyType', 'character'])
     const applyPetConfig = (key, value) => {
@@ -709,12 +782,14 @@ function apply(ctx) {
       // 음성 API 키 저장소도 선택적: 없으면 키 칸만 비활성화된다.
       ctx.inject(['remote', 'remote.credentials'], (scope) => {
         keys.attach(scope.remote.credentials)
-        const off = typeof scope.remote.$on === 'function' ? scope.remote.$on('credentials/reference-updated', (ref) => keys.changed(ref)) : null
-        scope.effect(() => () => { off?.(); keys.detach() }, 'deepseek-harness-kr: voice key')
+        chatKeys.attach(scope.remote.credentials)
+        const off = typeof scope.remote.$on === 'function' ? scope.remote.$on('credentials/reference-updated', (ref) => { keys.changed(ref); chatKeys.changed(ref) }) : null
+        scope.effect(() => () => { off?.(); keys.detach(); chatKeys.detach() }, 'deepseek-harness-kr: voice key')
       })
     }
     life.add(() => updater.detach())
     life.add(() => keys.detach())
+    life.add(() => chatKeys.detach())
     let ttsKey = null
     const syncTts = (value) => {
       const next = ttsSignature(value)
@@ -734,6 +809,7 @@ function apply(ctx) {
       // 캐릭터는 매 프레임 이 값을 읽어 소품·옷·체형을 바로 바꾼다 (다시 띄우지 않음)
       window.__dscOutfit = Object.fromEntries([...OUTFIT_FIELDS.map(([field]) => [field, value[field] === true]), ['bodyType', value.bodyType || 'default']])
       keys.setRef(value.tts?.openai?.apiKeyEnv ?? DEFAULT_KEY_REF)
+      chatKeys.setRef(value.chat?.openai?.apiKeyEnv ?? DEFAULT_CHAT_KEY_REF)
       syncTts(value)
       // 절전 설정도 실시간으로 전달 (캐릭터의 상태 감시 인터벌이 읽음)
       window.__dscSleep = { enabled: value.idleSleep !== false, minutes: sleepMinutes(value.idleSleepMinutes) }
@@ -741,6 +817,21 @@ function apply(ctx) {
       window.__dscIntro = { enabled: value.intro !== false }
     }
     life.add(() => { delete window.__dscOutfit; delete window.__dscSleep; delete window.__dscIntro })
+    // 지금 보고 있는 세션 id: 캐릭터가 "이 세션의 모델을 빌려" 대꾸할 때 쓴다.
+    // uiSession은 늦게 뜰 수 있어 inject로 기다린다 (없으면 세션 모델 빌리기만 못 쓴다).
+    if (typeof ctx.inject === 'function') {
+      ctx.inject(['uiSession'], (scope) => {
+        const current = scope.uiSession?.adapter?.current
+        if (!current || typeof current.subscribe !== 'function') return
+        const syncSession = () => {
+          const key = current.getSnapshot?.()?.key
+          window.__dscSessionId = typeof key === 'string' ? key : ''
+        }
+        syncSession()
+        scope.effect(() => () => { delete window.__dscSessionId }, 'deepseek-harness-kr: session id')
+        scope.effect(() => current.subscribe(syncSession), 'deepseek-harness-kr: session id')
+      })
+    }
     life.add(form.subscribe(sync))
     // 단축키로 캐릭터 토글: 설정의 character 스위치를 뒤집는다 (설정 화면과 같은 저장소·같은 마운트/정리 경로)
     let heldToggleKey = '', togglePending = false
@@ -769,7 +860,7 @@ function apply(ctx) {
     life.listen(window, 'blur', () => { heldToggleKey = '' })
     life.add(ctx.slots.inject('plugins.row.config', () => ctx.slots.register({
       name: 'plugins.row.config', key: PLUGIN_ID + '#' + ENTRY_ID,
-    }, settingsPage(ctx, form, updater, keys))))
+    }, settingsPage(ctx, form, updater, keys, chatKeys))))
     sync()
   } catch (error) { dispose(); throw error }
 }

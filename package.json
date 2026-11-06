@@ -1,6 +1,6 @@
 {
   "name": "deepseek-harness-kr",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "DeepSeek Harness 한국어 UI, 파스텔 테마 및 DeepSeek짱 Live2D 캐릭터",
   "type": "module",
   "license": "MIT",
@@ -13,6 +13,8 @@
   "files": [
     "plugin/host.js",
     "plugin/app-icon.js",
+    "plugin/chat-config.js",
+    "plugin/chat-host.js",
     "plugins/dsh-tts/src/cache.js",
     "plugins/dsh-tts/src/config.js",
     "plugins/dsh-tts/src/host.js",
