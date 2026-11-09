@@ -158,10 +158,10 @@ test("모델 대화 훅: 상태 조회·역할 판정·태그 분리·우클릭 
   assert.ok(SRC.includes('if (chat.ready("mutter")) { void chat.mutter(raw); return; }'), "혼잣말 위임");
   assert.ok(SRC.includes('else if (chat.ready("summary")) {'), "결과 요약 위임");
   assert.ok(SRC.includes("void chat.summary().then((ok) => { if (!ok) {"), "요약 실패 시 규칙 대사 폴백");
-  // 우클릭 → 입력 말풍선 (창 안 캐릭터에서만). 설정을 아직 못 읽었어도 열어 보고, 판정은 캔버스 칸 전체로 넓게 받는다
+  // 우클릭 → 메뉴 (창 안 캐릭터에서만). 곧바로 대화를 열지 않고 메뉴에서 고르게 하고, 판정은 캔버스 칸 전체로 넓게 받는다
   assert.ok(
-    SRC.includes('if (chat.available() && overChat(e.clientX, e.clientY)) { e.preventDefault(); e.stopPropagation(); chat.open(); return; }'),
-    "우클릭 조건",
+    SRC.includes('if (overChat(e.clientX, e.clientY) && openMenu(e.clientX, e.clientY)) { e.preventDefault(); e.stopPropagation(); return; }'),
+    "우클릭 메뉴 열기",
   );
   assert.match(SRC, /const overChat = \(cx ?,\s?cy ?\) => \{/, "우클릭 판정 함수");
   assert.ok(
@@ -180,6 +180,40 @@ test("모델 대화 훅: 상태 조회·역할 판정·태그 분리·우클릭 
   assert.ok(CHAT_SRC.includes('if (typeof window.__dscSessionId === "string" && window.__dscSessionId) body.sessionId = window.__dscSessionId;'), "세션 id 전달");
   // 펫 창 메뉴 "대화하기…" 는 창 안으로 돌아온 뒤 입력 말풍선을 연다
   assert.ok(SRC.includes("onChat: () => chat.openSoon(),"), "펫 창 메뉴 연결");
+});
+
+test("우클릭 메뉴: 캐릭터를 눌러도 대화가 바로 열리지 않고 메뉴에서 고른다", () => {
+  // 메뉴 요소는 창 안 전용 (펫 창은 OS 메뉴를 쓴다)
+  assert.ok(SRC.includes('menu.id = "dsc-menu"'), "메뉴 요소");
+  assert.ok(SRC.includes("document.body.append(canvas, bubble, bubbleStatus, menu);"), "본문에 붙이기");
+  // 캐릭터를 숨길 때(말풍선을 함께 내릴 때) 열려 있던 메뉴도 닫는다
+  assert.ok(SRC.includes('if (value === "none") closeMenu();'), "숨길 때 메뉴도 닫기");
+  // 항목: 대화하기… 는 모델 대화가 켜져 있을 때만, 창 밖으로 내보내기는 펫 창을 쓸 수 있을 때만
+  assert.ok(SRC.includes('if (chat.available()) list.push({ label: "대화하기…", run: () => chat.open() });'), "대화하기 항목");
+  assert.ok(SRC.includes('list.push({ label: "창 밖으로 내보내기", run: () => { try { hooks.togglePet?.(); }'), "내보내기 항목");
+  // 항목이 없으면 열지 않고 브라우저 기본 메뉴에 맡긴다 (preventDefault 를 하지 않는다)
+  assert.ok(SRC.includes("if (!list.length) { hideMenu(); return false; }"), "항목 없으면 열지 않음");
+  // 화면 밖으로 나가지 않게 자리를 잡는다
+  assert.ok(SRC.includes('menu.style.left = "0px"; menu.style.top = "0px";'), "자리 계산 전 초기화");
+  assert.ok(SRC.includes("Math.min(innerWidth - box.width - 8, cx)"), "가로 클램프");
+  assert.ok(SRC.includes("Math.min(innerHeight - box.height - 8, cy)"), "세로 클램프");
+  // 바깥 누름·Esc·스크롤·창 크기 변경에서 닫는다
+  assert.equal((SRC.match(/if \(menuOpen\(\)\) hideMenu\(\);/g) || []).length, 3, "닫기 경로(누름·스크롤·크기)");
+  assert.ok(SRC.includes('if (e.key === "Escape" && menuOpen())'), "Esc 닫기");
+});
+
+test("우클릭 메뉴: 펫 창 메뉴와 같은 항목(소품·옷·체형·숨기기)을 서브메뉴로 낸다", () => {
+  // 소품·옷과 체형은 플러그인 설정에 저장해야 캐릭터가 다음 프레임에 읽는다 (onSetting 통로)
+  assert.ok(SRC.includes('if (onSetting) {'), "설정 통로가 있을 때만 외형 항목");
+  assert.ok(SRC.includes('list.push({ label: "소품·옷", children: OUTFIT_ITEMS.map((item) => ({ label: item.ko, checked: outfit[item.key] === true, run: () => onSetting?.(item.key, outfit[item.key] !== true) })) });'), "소품·옷 서브메뉴");
+  assert.ok(SRC.includes('list.push({ label: "체형", children: BODY_TYPES.map((body) => ({ label: body.ko, checked: (outfit.bodyType || "default") === body.key, run: () => onSetting?.("bodyType", body.key) })) });'), "체형 서브메뉴");
+  assert.ok(SRC.includes('list.push({ label: "캐릭터 잠시 숨기기", run: () => { try { hooks.toggleCanvas?.(); }'), "숨기기 항목은 캔버스 숨김(다시 띄우기 쉬운 쪽)");
+  // 서브메뉴는 한 겹 DOM으로 만들고, 화면 밖으로 넘치면 왼쪽으로 펼친다
+  assert.ok(SRC.includes('sub.className = "dsc-menu dsc-submenu";'), "서브메뉴 상자");
+  assert.ok(SRC.includes('if (box.right > innerWidth - 8) sub.classList.add("flip");'), "오른쪽 넘침이면 왼쪽으로");
+  assert.ok(SRC.includes("for (const other of menu.querySelectorAll(\".dsc-menu-row.open\")) if (other !== row) other.classList.remove(\"open\");"), "한 번에 한 서브메뉴만");
+  // 체크 표시는 글자 앞 ✓ 로 (OS 메뉴의 radio/checkbox 흉내)
+  assert.ok(SRC.includes('button.textContent = (item.checked ? "✓ " : "") + item.label;'), "체크 표시");
 });
 
 test("dsc.js 는 특정 플러그인/URL 에 의존하지 않는다", () => {

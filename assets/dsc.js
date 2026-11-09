@@ -1070,9 +1070,15 @@
         bubble.id = "dsc-bubble";
         const bubbleStatus = life.own(document.createElement("div"), (node) => node.remove());
         bubbleStatus.id = "dsc-bubble-status";
-        document.body.append(canvas, bubble, bubbleStatus);
+        const menu = life.own(document.createElement("div"), (node) => node.remove());
+        menu.id = "dsc-menu";
+        menu.setAttribute("role", "menu");
+        document.body.append(canvas, bubble, bubbleStatus, menu);
+        let closeMenu = () => {
+        };
         const setBubbleDisplay = (value) => {
           bubble.style.display = bubbleStatus.style.display = value;
+          if (value === "none") closeMenu();
         };
         const app = new PIXI.Application({ view: canvas, width: W, height: H, sharedTicker: false, autoStart: false, backgroundAlpha: 0, antialias: true, autoDensity: true, resolution: (devicePixelRatio || 1) * 1.5 });
         const systemTicker = (on) => {
@@ -4448,6 +4454,129 @@
           const over = !walking() && !!hitAt(e.clientX, e.clientY);
           document.documentElement.classList.toggle("dsc-hover", over);
         }, { passive: true });
+        const menuItems = () => {
+          const list = [];
+          if (chat.available()) list.push({ label: "대화하기…", run: () => chat.open() });
+          if (!PET && hooks.togglePet) list.push({ label: "창 밖으로 내보내기", run: () => {
+            try {
+              hooks.togglePet?.();
+            } catch (error) {
+              console.warn("펫 창 내보내기 실패", error);
+            }
+          } });
+          if (onSetting) {
+            const outfit = prefs.outfit || {};
+            list.push({ label: "소품·옷", children: OUTFIT_ITEMS.map((item) => ({ label: item.ko, checked: outfit[item.key] === true, run: () => onSetting?.(item.key, outfit[item.key] !== true) })) });
+            list.push({ label: "체형", children: BODY_TYPES.map((body) => ({ label: body.ko, checked: (outfit.bodyType || "default") === body.key, run: () => onSetting?.("bodyType", body.key) })) });
+          }
+          if (!PET && hooks.toggleCanvas) list.push({ label: "캐릭터 잠시 숨기기", run: () => {
+            try {
+              hooks.toggleCanvas?.();
+            } catch (error) {
+              console.warn("캐릭터 숨기기 실패", error);
+            }
+          } });
+          return list;
+        };
+        const hideMenu = () => {
+          menu.classList.remove("show");
+          menu.textContent = "";
+        };
+        closeMenu = hideMenu;
+        const openMenu = (cx, cy) => {
+          const list = menuItems();
+          if (!list.length) {
+            hideMenu();
+            return false;
+          }
+          menu.textContent = "";
+          fillMenu(menu, list);
+          menu.classList.add("show");
+          menu.style.left = "0px";
+          menu.style.top = "0px";
+          const box = menu.getBoundingClientRect();
+          menu.style.left = Math.round(Math.max(8, Math.min(innerWidth - box.width - 8, cx))) + "px";
+          menu.style.top = Math.round(Math.max(8, Math.min(innerHeight - box.height - 8, cy))) + "px";
+          return true;
+        };
+        function openRow(row) {
+          for (const other of menu.querySelectorAll(".dsc-menu-row.open")) if (other !== row) other.classList.remove("open");
+          row.classList.add("open");
+          const sub = row.querySelector(".dsc-submenu");
+          if (!sub) return;
+          sub.classList.remove("flip");
+          const box = sub.getBoundingClientRect();
+          if (box.right > innerWidth - 8) sub.classList.add("flip");
+          if (box.bottom > innerHeight - 8) sub.style.top = -(box.bottom - innerHeight + 10) + "px";
+          else sub.style.top = "";
+        }
+        function fillMenu(box, list) {
+          for (const item of list) {
+            if (item.children && item.children.length) {
+              const row = document.createElement("div");
+              row.className = "dsc-menu-row";
+              row.setAttribute("role", "menuitem");
+              row.setAttribute("aria-haspopup", "true");
+              row.tabIndex = 0;
+              const text = document.createElement("span");
+              text.className = "dsc-menu-text";
+              text.textContent = item.label;
+              const arrow = document.createElement("span");
+              arrow.className = "dsc-menu-arrow";
+              arrow.textContent = "›";
+              row.append(text, arrow);
+              const sub = document.createElement("div");
+              sub.className = "dsc-menu dsc-submenu";
+              sub.setAttribute("role", "menu");
+              fillMenu(sub, item.children);
+              row.append(sub);
+              row.addEventListener("pointerenter", () => {
+                if (!coarsePointer()) openRow(row);
+              });
+              row.addEventListener("pointerleave", () => row.classList.remove("open"));
+              row.addEventListener("click", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (row.classList.contains("open")) row.classList.remove("open");
+                else openRow(row);
+              });
+              box.append(row);
+              continue;
+            }
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "dsc-menu-item";
+            button.setAttribute("role", item.checked === void 0 ? "menuitem" : "menuitemradio");
+            button.textContent = (item.checked ? "✓ " : "") + item.label;
+            if (item.checked !== void 0) button.setAttribute("aria-checked", item.checked ? "true" : "false");
+            button.addEventListener("click", (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              hideMenu();
+              item.run?.();
+            });
+            box.append(button);
+          }
+        }
+        const menuOpen = () => menu.classList.contains("show");
+        life.listen(document, "pointerdown", (e) => {
+          const target = e.target;
+          if (target && menu.contains(target)) return;
+          if (menuOpen()) hideMenu();
+        }, true);
+        life.listen(document, "keydown", (e) => {
+          if (e.key === "Escape" && menuOpen()) {
+            e.preventDefault();
+            e.stopPropagation();
+            hideMenu();
+          }
+        }, true);
+        life.listen(document, "scroll", () => {
+          if (menuOpen()) hideMenu();
+        }, true);
+        life.listen(window, "resize", () => {
+          if (menuOpen()) hideMenu();
+        });
         life.listen(document, "contextmenu", (e) => {
           if (hidden) return;
           if (drag.pending || drag.on) {
@@ -4456,10 +4585,9 @@
             return;
           }
           if (!PET) {
-            if (chat.available() && overChat(e.clientX, e.clientY)) {
+            if (overChat(e.clientX, e.clientY) && openMenu(e.clientX, e.clientY)) {
               e.preventDefault();
               e.stopPropagation();
-              chat.open();
               return;
             }
             if (coarsePointer() && overBody(e.clientX, e.clientY)) {

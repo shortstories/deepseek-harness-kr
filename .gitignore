@@ -11,3 +11,6 @@
 # Development dependencies and package archives
 /node_modules/
 /*.tgz
+
+# 로컬 전용 작업 메모(공개하지 않음)
+/AGENTS.local.md

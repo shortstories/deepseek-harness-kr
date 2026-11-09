@@ -60,6 +60,8 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
   base: string; life: Lifetime; pet?: PetBridge | null; prefs?: CharacterPrefs; onSetting?: ((key: string, value: unknown) => void) | null;
 }): CharacterApi {
   const BASE = base;
+  /** 우클릭 메뉴 항목. children이 있으면 서브메뉴, checked는 체크·라디오 표시 */
+  type MenuItem = { label: string; run?: () => void; children?: MenuItem[]; checked?: boolean };
   const prefs: CharacterPrefs = { ...initialPrefs };
   const hooks: { syncPageHidden?: () => void; togglePet?: () => void; toggleCanvas?: () => boolean; canvasHidden?: () => boolean } = {};   // 모델이 준비된 뒤 채워지는 동작 (펫 창·캔버스 토글, 패널 숨김 반영)
   let petUsed = false;   // 이 화면에서 바깥 펫 창을 쓴 적이 있는지 (내려갈 때 펫 창도 숨긴다)
@@ -123,9 +125,13 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
       const bubble = life.own(document.createElement("div"), (node) => node.remove()); bubble.id = "dsc-bubble";
       // 작업 상태(명령 실행 중 등)는 본 말풍선과 따로 띄운다. 혼잣말·대사가 상태 문구를 덮어쓰지 않아 둘이 동시에 보인다
       const bubbleStatus = life.own(document.createElement("div"), (node) => node.remove()); bubbleStatus.id = "dsc-bubble-status";
-      document.body.append(canvas, bubble, bubbleStatus);
-      /** 말풍선(본·상태) 표시를 함께 바꾼다 */
-      const setBubbleDisplay = (value: string) => { bubble.style.display = bubbleStatus.style.display = value; };
+      // 우클릭 메뉴 (창 안 전용). 펫 창은 OS 메뉴를 쓰고, 창 안은 이 목록으로 같은 일을 한다
+      const menu = life.own(document.createElement("div"), (node) => node.remove()); menu.id = "dsc-menu"; menu.setAttribute("role", "menu");
+      document.body.append(canvas, bubble, bubbleStatus, menu);
+      /** 메뉴 닫기 (실제 구현은 캐릭터가 뜬 뒤 아래에서 채운다) */
+      let closeMenu: () => void = () => {};
+      /** 말풍선(본·상태) 표시를 함께 바꾼다. 둘 다 내릴 때는 열려 있던 우클릭 메뉴도 닫는다 */
+      const setBubbleDisplay = (value: string) => { bubble.style.display = bubbleStatus.style.display = value; if (value === "none") closeMenu(); };
       // 티커는 스스로 rAF를 돌지 않는다(autoStart: false). 배치 루프(raf)가 배치 바로 뒤에 같은 프레임에서 app.ticker.update로 갱신·그리기를 돌린다
       const app = new PIXI.Application({ view: canvas, width: W, height: H, sharedTicker: false, autoStart: false, backgroundAlpha: 0, antialias: true, autoDensity: true, resolution: (devicePixelRatio || 1) * 1.5 });   // 1.5배로 그려 줄여 보여 줌
       /**
@@ -3544,14 +3550,108 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
         const over = !walking() && !!hitAt(e.clientX, e.clientY);
         document.documentElement.classList.toggle("dsc-hover", over);
       }, { passive: true });
+      /**
+       * 우클릭 메뉴에 넣을 항목 (지금 쓸 수 있는 것만).
+       * 창 안 캐릭터를 우클릭해도 곧바로 대화가 열리지 않고 메뉴가 먼저 뜨므로, 대화는 메뉴 항목으로 연다 (펫 창과 같은 방식).
+       * 항목 이름·순서는 펫 창 메뉴(pet/main.cjs)와 맞춘다. 창 안에는 Electron 메뉴 API가 없어 DOM으로 같은 모양을 만든다.
+       * @returns 항목 목록 (비어 있으면 브라우저 기본 메뉴에 맡긴다)
+       */
+      const menuItems = (): MenuItem[] => {
+        const list: MenuItem[] = [];
+        if (chat.available()) list.push({ label: "대화하기…", run: () => chat.open() });
+        if (!PET && hooks.togglePet) list.push({ label: "창 밖으로 내보내기", run: () => { try { hooks.togglePet?.(); } catch (error) { console.warn("펫 창 내보내기 실패", error); } } });
+        if (onSetting) {
+          // 소품·옷과 체형은 플러그인 설정에 저장해야 캐릭터가 다음 프레임에 읽는다 (펫 창 메뉴와 같은 통로)
+          const outfit = prefs.outfit || {};
+          list.push({ label: "소품·옷", children: OUTFIT_ITEMS.map((item) => ({ label: item.ko, checked: outfit[item.key] === true, run: () => onSetting?.(item.key, outfit[item.key] !== true) })) });
+          list.push({ label: "체형", children: BODY_TYPES.map((body) => ({ label: body.ko, checked: (outfit.bodyType || "default") === body.key, run: () => onSetting?.("bodyType", body.key) })) });
+        }
+        // 펫 창의 "캐릭터 잠시 숨기기"는 캐릭터 설정을 끈다(모델을 내림). 창 안에서는 다시 띄우기 쉬운 캔버스 숨김을 쓴다
+        if (!PET && hooks.toggleCanvas) list.push({ label: "캐릭터 잠시 숨기기", run: () => { try { hooks.toggleCanvas?.(); } catch (error) { console.warn("캐릭터 숨기기 실패", error); } } });
+        return list;
+      };
+      /** 메뉴를 닫고 항목을 비운다 (다음에 열 때 지금 쓸 수 있는 것만 다시 만든다) */
+      const hideMenu = () => { menu.classList.remove("show"); menu.textContent = ""; };
+      closeMenu = hideMenu;
+      /**
+       * 우클릭한 자리에 메뉴를 연다. 항목이 없으면 열지 않고 false를 돌려 브라우저 기본 메뉴에 맡긴다
+       * @param cx 창 x 좌표(clientX)
+       * @param cy 창 y 좌표(clientY)
+       * @returns 메뉴를 열었으면 true
+       */
+      const openMenu = (cx: number, cy: number): boolean => {
+        const list = menuItems();
+        if (!list.length) { hideMenu(); return false; }
+        menu.textContent = "";
+        fillMenu(menu, list);
+        menu.classList.add("show");
+        menu.style.left = "0px"; menu.style.top = "0px";   // 붙인 뒤 크기를 재서 화면 밖으로 나가지 않게 자리를 정한다
+        const box = menu.getBoundingClientRect();
+        menu.style.left = Math.round(Math.max(8, Math.min(innerWidth - box.width - 8, cx))) + "px";
+        menu.style.top = Math.round(Math.max(8, Math.min(innerHeight - box.height - 8, cy))) + "px";
+        return true;
+      };
+      /**
+       * 서브메뉴 펼치기: 다른 줄은 접고, 오른쪽으로 넘치면 왼쪽으로 펼친다
+       * @param row 펼칠 줄
+       */
+      function openRow(row: HTMLElement) {
+        for (const other of menu.querySelectorAll(".dsc-menu-row.open")) if (other !== row) other.classList.remove("open");
+        row.classList.add("open");
+        const sub = row.querySelector<HTMLElement>(".dsc-submenu");
+        if (!sub) return;
+        sub.classList.remove("flip");
+        const box = sub.getBoundingClientRect();
+        if (box.right > innerWidth - 8) sub.classList.add("flip");
+        // 위아래로도 넘치지 않게 민다
+        if (box.bottom > innerHeight - 8) sub.style.top = -(box.bottom - innerHeight + 10) + "px";
+        else sub.style.top = "";
+      }
+      /**
+       * 항목 목록을 메뉴 상자에 채운다 (children이 있으면 한 겹 서브메뉴)
+       * @param box 항목을 넣을 상자 (메뉴 본체 또는 서브메뉴)
+       * @param list 채울 항목
+       */
+      function fillMenu(box: HTMLElement, list: MenuItem[]) {
+        for (const item of list) {
+          if (item.children && item.children.length) {
+            const row = document.createElement("div");
+            row.className = "dsc-menu-row"; row.setAttribute("role", "menuitem"); row.setAttribute("aria-haspopup", "true"); row.tabIndex = 0;
+            const text = document.createElement("span"); text.className = "dsc-menu-text"; text.textContent = item.label;
+            const arrow = document.createElement("span"); arrow.className = "dsc-menu-arrow"; arrow.textContent = "›";
+            row.append(text, arrow);
+            const sub = document.createElement("div");
+            sub.className = "dsc-menu dsc-submenu"; sub.setAttribute("role", "menu");
+            fillMenu(sub, item.children);
+            row.append(sub);
+            // 마우스를 올리거나 키보드로 들어가면 펼친다 (좁은 화면에서는 눌러도 펼친다)
+            row.addEventListener("pointerenter", () => { if (!coarsePointer()) openRow(row); });
+            row.addEventListener("pointerleave", () => row.classList.remove("open"));
+            row.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); if (row.classList.contains("open")) row.classList.remove("open"); else openRow(row); });
+            box.append(row);
+            continue;
+          }
+          const button = document.createElement("button");
+          button.type = "button"; button.className = "dsc-menu-item"; button.setAttribute("role", item.checked === undefined ? "menuitem" : "menuitemradio"); button.textContent = (item.checked ? "✓ " : "") + item.label;
+          if (item.checked !== undefined) button.setAttribute("aria-checked", item.checked ? "true" : "false");
+          button.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); hideMenu(); item.run?.(); });
+          box.append(button);
+        }
+      }
+      // 메뉴는 바깥 누름·Esc·스크롤·창 크기 변경에서 닫는다 (캐릭터를 숨길 때는 setBubbleDisplay가 닫는다)
+      const menuOpen = () => menu.classList.contains("show");
+      life.listen(document, "pointerdown", (e) => { const target = e.target as Node | null; if (target && menu.contains(target)) return; if (menuOpen()) hideMenu(); }, true);
+      life.listen(document, "keydown", (e) => { if (e.key === "Escape" && menuOpen()) { e.preventDefault(); e.stopPropagation(); hideMenu(); } }, true);
+      life.listen(document, "scroll", () => { if (menuOpen()) hideMenu(); }, true);
+      life.listen(window, "resize", () => { if (menuOpen()) hideMenu(); });
       // 우클릭은 집어 옮기기의 보조 버튼이라, 끄는 중에는 메뉴를 열지 않는다 (펫 창에서는 놓은 뒤에만 메뉴)
       life.listen(document, "contextmenu", (e) => {
         if (hidden) return;
         if (drag.pending || drag.on) { e.preventDefault(); e.stopPropagation(); return; }
         if (!PET) {
-          // 창 안: 캐릭터를 우클릭하면 말을 거는 입력 말풍선을 연다 (모델 대화의 직접 대화가 켜져 있을 때만).
-          // 설정을 아직 못 읽었을 때도 열어 본다 — 첫 화면에서 몇 초 동안 우클릭이 그냥 브라우저 메뉴가 되던 문제
-          if (chat.available() && overChat(e.clientX, e.clientY)) { e.preventDefault(); e.stopPropagation(); chat.open(); return; }
+          // 창 안: 캐릭터를 우클릭하면 메뉴를 연다 (대화하기…·창 밖으로 내보내기). 펫 창처럼 고르게 하고, 대화는 그 안에서 연다.
+          // 쓸 수 있는 항목이 없으면(대화도 펫도 꺼짐) 손대지 않고 브라우저 기본 메뉴에 맡긴다
+          if (overChat(e.clientX, e.clientY) && openMenu(e.clientX, e.clientY)) { e.preventDefault(); e.stopPropagation(); return; }
           // 터치 화면에서 캐릭터를 길게 누를 때 뜨는 브라우저 메뉴·선택을 막는다 (집기가 풀리던 원인). 데스크톱 우클릭은 그대로 둔다
           if (coarsePointer() && overBody(e.clientX, e.clientY)) { e.preventDefault(); e.stopPropagation(); }
           return;
