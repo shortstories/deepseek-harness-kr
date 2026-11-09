@@ -43,6 +43,21 @@ html.dsc-grabbing, html.dsc-grabbing * { cursor: grabbing !important; user-selec
   clip-path: polygon(100% 6px, 18px 8px, 18px 7.29px, 7.29px 18px, 8px 18px, 6px 100%, 100% 100%);
 }
 
+/* 상태 말풍선(명령 실행 중·파일 읽는 중…): 본 말풍선과 따로 떠서 혼잣말과 동시에 보인다.
+   꼬리 없이 작은 알약 모양, 본 말풍선보다 한 단계 작고 옅게 둬 대사가 주인공으로 보이게 한다 */
+#dsc-bubble-status {
+  position: fixed; z-index: 31; pointer-events: none; display: none;
+  max-width: 240px; padding: 5px 11px; border-radius: 999px;
+  background: #f2f5fff2; color: #56608f; border: 1.5px solid #c3cffd;
+  font: 600 11.5px/1.4 "Malgun Gothic", sans-serif; word-break: keep-all; text-align: center;
+  box-shadow: 0 4px 12px #5f7cf522;
+  opacity: 0; transform: translateY(4px) scale(.97); transition: opacity .18s, transform .18s;
+}
+#dsc-bubble-status.show { display: block; opacity: 1; transform: none; }
+html body[data-ds-dark-theme] #dsc-bubble-status {
+  background: #1b1e26e6; color: #9aa5cc; border-color: #414d7d; box-shadow: 0 4px 12px #00000055;
+}
+
 html body[data-ds-dark-theme] #dsc-bubble {
   --dsc-bubble-bg: #22242bf2;
   --dsc-bubble-fg: #e8ebf5;

@@ -159,6 +159,12 @@ function installLayout(win, size) {
   const proto = win.HTMLElement.prototype
   const box = (el) => {
     if (el.classList.contains('dsc-composer')) return { left: 300, top: size.h - 220, width: 1000, height: 120 }
+    if (el.id === 'dsc-bubble-status') {
+      const w = Math.min(px(el.style.maxWidth) || 240, 30 + 11.5 * (el.textContent || '').length)
+      const h = 14 + 16 * Math.max(1, Math.ceil(w / (px(el.style.maxWidth) || 240)))
+      const left = el.style.left && el.style.left !== 'auto' ? px(el.style.left) : size.w - px(el.style.right) - w
+      return { left, top: px(el.style.top), width: w, height: h }
+    }
     if (el.id === 'dsc-bubble') {
       const w = bubbleW(el), h = bubbleH(el)
       const left = el.style.left && el.style.left !== 'auto' ? px(el.style.left) : size.w - px(el.style.right) - w

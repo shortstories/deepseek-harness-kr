@@ -52,6 +52,7 @@ test('sleep cancels departures, protects intro and wakes for waiting cards', asy
       addEventListener: (type, fn, options) => { assert.equal(options.capture, true); events.set(type, fn) },
       canvas: { style: {}, getBoundingClientRect: () => ({ left: 700 }) },
       bubble: { style: {}, classList: { contains: () => false } },
+      bubbleStatus: { style: {}, classList: { contains: () => false } }, setBubbleDisplay() {},
       app: { ticker: { get started() { return !stopped }, start: () => { stopped = false }, stop: () => { stopped = true } } },
       setRender: (on) => { stopped = !on },   // 배치 코드가 쓰는 상태 기반 티커 제어 (테스트에선 stopped 로만 확인)
       document: { hidden: false, querySelector: (selector) => selector === 'stop' ? working : selector.includes(card) && card },
@@ -117,6 +118,7 @@ test('sleep preserves free placement, blocks dragging and never sleeps while the
       drag: {}, free: { on: true, k: 0.8, fx: 0.3, fy: 0.6, applied: true }, link: {},
       walk: { phase: '', timers: [], slideId: 0 }, intro: { phase: 'done' },
       canvas: { style: {}, getBoundingClientRect: () => ({ left: 220 }) }, bubble: { style: {} },
+      bubbleStatus: { style: {}, classList: { contains: () => false } }, setBubbleDisplay() {},
       app: { ticker: { get started() { return !stopped }, start() { stopped = false }, stop() { stopped = true } } },
       setRender: (on) => { stopped = !on },   // 배치 코드가 쓰는 상태 기반 티커 제어 (테스트에선 stopped 로만 확인)
       keepIn: (q) => q, speak: (line) => lines.push(line), hush() {}, place() {},

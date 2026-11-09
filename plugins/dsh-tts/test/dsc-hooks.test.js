@@ -61,7 +61,9 @@ test("호출지 kind 태깅: TEXT 5곳 reaction, TOOLS 1곳 status", () => {
     8,
     "reaction 태그 8개 (모델 요약·대화 포함)",
   );
-  assert.equal((SRC.match(/"status"/g) || []).length, 1, "status 태그 1개");
+  // 상태(도구 실행) 문구는 두 번째 말풍선으로 보낸다: say()의 라우팅 + 도구 호출지
+  assert.match(SRC, /if \(kind === "status"\) \{\s+sayStatus\(text, ms\);/, "status 는 상태 말풍선으로 라우팅");
+  assert.equal((SRC.match(/"status"/g) || []).length, 2, "status 태그 2개 (호출지 + 라우팅)");
   // 그대로 둔 호출지: 터치 반응 = other, 혼잣말 = mutter
   assert.ok(SRC.includes("say(text, ms);"), "터치 반응 호출지는 인자 그대로");
   assert.match(
@@ -121,6 +123,25 @@ test("말풍선 조건부 유지: 재생 중이면 250ms 재확인, voiceState �
   );
 });
 
+test("말풍선 두 개: 상태 말풍선은 본 말풍선과 분리 배치·분리 수명", () => {
+  const CSS = fs.readFileSync(path.resolve(HERE, "../../../assets/character.css"), "utf8");
+  assert.ok(SRC.includes('bubbleStatus.id = "dsc-bubble-status"'), "상태 말풍선 요소 생성");
+  assert.ok(CSS.includes("#dsc-bubble-status"), "상태 말풍선 스타일");
+  // 본 말풍선을 건드리지 않고 상태 문구만 갈아 끼운다
+  const statusBody = SRC.slice(SRC.indexOf("const sayStatus ="), SRC.indexOf("const say = (text"));
+  assert.ok(statusBody.length > 40, "sayStatus 정의를 찾았다");
+  assert.ok(statusBody.includes("bubbleStatus.textContent = text;"), "상태 문구는 상태 말풍선에");
+  assert.ok(!statusBody.includes("bubble.textContent"), "본 말풍선은 건드리지 않는다");
+  assert.ok(!statusBody.includes("lastSayAt"), "lastSayAt 을 갱신하지 않아 혼잣말 2.5초 간격을 막지 않는다");
+  assert.ok(SRC.includes("const hideStatus = (delay = 0) => {"), "상태 말풍선 숨김");
+  // 배치: 본 말풍선을 놓은 뒤 그 위에 상태 말풍선을 놓는다
+  assert.match(SRC, /placeBubble\(introOn, spot\);\s+placeStatusBubble\(spot\);/, "place() 가 둘 다 배치");
+  assert.ok(SRC.includes("const placeStatusBubble = ({ noseX, headTop }") || SRC.includes("const placeStatusBubble = ({ noseX, headTop })"), "배치 함수");
+  // 작업이 끝나면 상태 말풍선을 내린다 (본 말풍선 결과 대사는 그대로)
+  assert.ok(SRC.includes("hideStatus();   // 작업이 끝났으므로 상태 말풍선을 내린다"), "턴 종료 시 숨김");
+  assert.ok(SRC.includes("bubbleStatus.classList.contains(\"show\") ? bubbleStatus.textContent : \"\""), "__dsc.status 훅");
+});
+
 test("모델 대화 훅: 상태 조회·역할 판정·태그 분리·우클릭 대화", () => {
   // 호스트 라우트 (플러그인 자신의 경로만 쓴다)
   assert.ok(CHAT_SRC.includes('const CHAT_STATE_URL = "/deepseek-harness-kr/chat/state";'), "상태 라우트");
@@ -150,6 +171,9 @@ test("모델 대화 훅: 상태 조회·역할 판정·태그 분리·우클릭 
   assert.ok(CHAT_SRC.includes("root.id = \"dsc-chat\";"), "입력 말풍선 요소");
   // 길이는 지시문보다 느슨하게: 넘칠 때만 …로 줄인다 (문장을 잘라 어색해지지 않게)
   assert.ok(CHAT_SRC.includes('const fit = (line, max) => (line.length > max ? line.slice(0, max - 2).trimEnd() + "…" : line);'), "넘칠 때만 줄이기");
+  // 라우트가 없을 때(플러그인만 올리고 dsh-web 을 안 띄운 경우) 조용히 넘어가지 않고 콘솔에 한 번 남긴다
+  assert.ok(CHAT_SRC.includes('console.warn("[deepseek-harness-kr] 캐릭터 대화 라우트가 없습니다.'), "라우트 없음 경고");
+  assert.ok(CHAT_SRC.includes("if (r.status === 404 && !warned) {"), "경고는 한 번만");
   assert.ok(CHAT_SRC.includes("const MUTTER_MAX = 60;"), "혼잣말 길이 제한 60자");
   assert.ok(CHAT_SRC.includes("const SUMMARY_MAX = 90;"), "요약 길이 제한 90자");
   // 세션 모델 빌리기: 지금 보고 있는 세션 id 를 함께 보낸다

@@ -447,6 +447,7 @@ function runChipContext() {
     performance: { now: () => 0 },
     canvas: { style: {} },
     bubble: { style: {} },
+    bubbleStatus: { style: {} },
     veil: { style: {} },
     out: {},
   }
@@ -455,6 +456,7 @@ function runChipContext() {
     'let pageHiddenApplied = false;',
     'let sleepTimer = 0, cancelSleepSlide = null, fleeX = 0, strokeFrom = null, chestFrom = null, lastPlaceKey = "";',
     'const pageHiddenNow = () => !PET && prefs.pageHidden === true;',
+    'const setBubbleDisplay = (value) => { bubble.style.display = bubbleStatus.style.display = value; };',
     'const mobileHidden = () => mobileHiddenNow;',
     'const place = () => { placeCalls++ };',
     'let rafIdle = false;',

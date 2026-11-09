@@ -80,12 +80,17 @@ export function createChat(deps: ChatDeps): ChatApi {
   /** 대화 입구를 열어 볼 만한지 (아직 설정을 못 읽었으면 시도해 본다) */
   const available = () => !deps.petWindow && (state.known ? state.value?.enabled === true && state.value.roles?.chat === true : true);
 
+  /** 라우트 없음 경고를 한 번만 남겼는지 */
+  let warned = false;
   /** 지금 대화 설정 읽기 (꺼져 있으면 value = null. 응답을 받았으면 known = true) */
   const loadState = () => {
     if (deps.petWindow || state.loading) return;
     state.loading = true;
     fetch(CHAT_STATE_URL, { headers: { accept: "application/json" } })
       .then((r) => {
+        // 라우트가 없다 = 호스트가 아직 이 버전을 모른다 (플러그인만 올리고 dsh-web을 안 띄운 경우).
+        // 화면은 조용히 규칙 기반으로 돌아가므로, 원인을 찾을 수 있게 콘솔에 한 번만 남긴다
+        if (r.status === 404 && !warned) { warned = true; console.warn("[deepseek-harness-kr] 캐릭터 대화 라우트가 없습니다. 플러그인을 업데이트했다면 dsh-web을 재시작하세요."); }
         if (!r.ok) return null;
         return r.json() as Promise<ChatState>;
       })

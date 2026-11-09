@@ -121,7 +121,11 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
       const W = 300, H = 300;
       const canvas = life.own(document.createElement("canvas"), (node) => node.remove()); canvas.id = "dsc-stage";
       const bubble = life.own(document.createElement("div"), (node) => node.remove()); bubble.id = "dsc-bubble";
-      document.body.append(canvas, bubble);
+      // 작업 상태(명령 실행 중 등)는 본 말풍선과 따로 띄운다. 혼잣말·대사가 상태 문구를 덮어쓰지 않아 둘이 동시에 보인다
+      const bubbleStatus = life.own(document.createElement("div"), (node) => node.remove()); bubbleStatus.id = "dsc-bubble-status";
+      document.body.append(canvas, bubble, bubbleStatus);
+      /** 말풍선(본·상태) 표시를 함께 바꾼다 */
+      const setBubbleDisplay = (value: string) => { bubble.style.display = bubbleStatus.style.display = value; };
       // 티커는 스스로 rAF를 돌지 않는다(autoStart: false). 배치 루프(raf)가 배치 바로 뒤에 같은 프레임에서 app.ticker.update로 갱신·그리기를 돌린다
       const app = new PIXI.Application({ view: canvas, width: W, height: H, sharedTicker: false, autoStart: false, backgroundAlpha: 0, antialias: true, autoDensity: true, resolution: (devicePixelRatio || 1) * 1.5 });   // 1.5배로 그려 줄여 보여 줌
       /**
@@ -853,7 +857,7 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
       // place()가 아래 단계를 순서대로 부른다. 단계 순서와 DOM을 읽고 쓰는 순서가 곧 동작이므로 바꾸지 않는다
       // (리팩터링 때는 npm run trace:diff로 데스크톱 경로를 프레임마다 비교).
       /** 캔버스·말풍선 숨김 */
-      const hideCharacter = () => { canvas.style.display = bubble.style.display = "none"; };
+      const hideCharacter = () => { canvas.style.display = "none"; setBubbleDisplay("none"); };
       /**
        * 그릴 수 없는 상태면 숨김 처리. 패널 숨김에서 돌아왔으면 표시 복원
        * @returns 이번 프레임 배치를 멈춰야 하면 true
@@ -1100,7 +1104,8 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
       const placeKeyOf = ({ k, x, y, vp, home, noseX, fade, petFade, winBox, walkNow }: { k: number; x: number; y: number; vp: Viewport; home: Home; noseX: number; fade: number; petFade: number; winBox: PetBox | null; walkNow: boolean }) => {
         const cardBox = home.r;
         return [k, x, y, vp.left, vp.top, vp.w, vp.h, fleeX, Math.round(bodyWeight * 40), cardBox && cardBox.left, cardBox && cardBox.right, cardBox && cardBox.top, cardBox && cardBox.bottom,
-          Math.round(noseX / 3), home.above ? 1 : 0, bubble.textContent, bubble.className.replace(/\bside\b/g, "").trim(), fade, Math.round(petFade * 60), walkPlaceKey(walkNow),
+          Math.round(noseX / 3), home.above ? 1 : 0, bubble.textContent, bubble.className.replace(/\bside\b/g, "").trim(),
+          bubbleStatus.textContent, bubbleStatus.classList.contains("show") ? 1 : 0, fade, Math.round(petFade * 60), walkPlaceKey(walkNow),
           winBox ? [winBox.l, winBox.t, winBox.r, winBox.b].join(",") : ""].join("|");
       };
       /**
@@ -1132,7 +1137,7 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
        */
       const showAt = (introOn: boolean, k: number, home: Home) => {
         const show = introOn || k >= SHOW_K || (home.above && k >= MIN_SHOW_K);
-        canvas.style.display = bubble.style.display = show ? "block" : "none";
+        canvas.style.display = show ? "block" : "none"; setBubbleDisplay(show ? "block" : "none");
         setRender(show && (!PET || petPower));
         return show;
       };
@@ -1143,6 +1148,28 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
         if (introOn) placeIntroBubble(spot);
         else if (!coarsePointer() && !spot.home.above) placeDesktopBubble(spot);   // 데스크톱 말풍선은 기존 배치 그대로
         else placeMobileBubble(spot);
+      };
+      /**
+       * 상태 말풍선(두 번째 말풍선) 자리: 본 말풍선이 떠 있으면 그 바로 위에, 아니면 머리 위에 붙인다
+       * 폭은 본 말풍선 폭을 넘지 않게 해 화면 밖으로 밀리지 않게 하고, 본 말풍선과 같은 쪽 경계에 맞춘다
+       */
+      const placeStatusBubble = ({ noseX, headTop }: BubbleSpot) => {
+        const mainOn = bubble.classList.contains("show");
+        bubbleStatus.style.maxWidth = (mainOn ? Math.min(260, Math.max(120, bubble.offsetWidth)) : 240) + "px";
+        const w = bubbleStatus.offsetWidth, h = bubbleStatus.offsetHeight;
+        if (!w || !h) return;   // 아직 그려지지 않았으면 다음 프레임에 다시 배치한다
+        const mainTop = parseFloat(bubble.style.top);
+        const top = mainOn && Number.isFinite(mainTop) ? mainTop - h - 6 : headTop - h - 10;
+        bubbleStatus.style.top = Math.max(8, Math.min(top, innerHeight - h - 8)) + "px";
+        // 코 가운데를 기준으로 두되, 본 말풍선이 떠 있으면 그 가로 범위 안으로 밀어 넣어 삐져나오지 않게 한다
+        let left = noseX - w / 2;
+        const mainLeft = parseFloat(bubble.style.left);
+        if (mainOn && Number.isFinite(mainLeft)) {
+          const mainRight = mainLeft + bubble.offsetWidth;
+          if (mainRight - w >= mainLeft) left = Math.min(Math.max(left, mainLeft), mainRight - w);
+        }
+        bubbleStatus.style.left = Math.max(8, Math.min(left, innerWidth - w - 8)) + "px";
+        bubbleStatus.style.right = "auto";
       };
       /** 한 프레임 배치: 캐릭터 캔버스와 말풍선의 자리·크기·마스크 결정 (단계 순서가 곧 동작이라 바꾸지 않음) */
       const place = () => {
@@ -1172,12 +1199,13 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
         lastPlaceKey = placeKey;
         applyCanvasMask({ winBox, petFade, fade, x, y });
         canvas.style.width = W * k + "px"; canvas.style.height = H * k + "px";
-        if (fleeX !== 0) bubble.style.display = "none";
+        if (fleeX !== 0) setBubbleDisplay("none");
         canvas.style.left = x + "px"; canvas.style.top = y + "px";
         const headTop = y + (H * 0.05 + chibiHeadDrop * Math.min(1, Math.max(0, bodyWeight))) * k;   // 꼬마일 땐 내려간 머리 위에 말풍선
         bubble.classList.remove("side");
         const spot = { k, noseX, headTop, vp: viewArea, home, introProgress };
         placeBubble(introOn, spot);
+        placeStatusBubble(spot);
       };
       /**
        * 캔버스 숨김 칩을 보일지 여부: 캐릭터를 다시 부를 수 있는 상태에서만 보임
@@ -1219,6 +1247,7 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
 
       // 말풍선
       let bubbleTimer = 0;
+      let statusTimer = 0;   // 상태 말풍선(명령 실행 중 등) 숨김 타이머
       let lastSayAt = 0;
       let lastSayText = "";   // 말풍선에 마지막으로 띄운 문장 (연속 터치에서 같은 대사 반복 방지)
       /**
@@ -1238,8 +1267,36 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
        * @param mutter true면 혼잣말 (점선 말풍선 + 생각하는 시선)
        * @param kind 대사 종류 (바깥에 알릴 때 씀, 없으면 mutter 또는 other)
        */
+      /**
+       * 상태 말풍선(명령 실행 중·파일 읽는 중 등) 숨기기. 본 말풍선은 건드리지 않는다
+       * @param delay 숨길 때까지 기다릴 시간(ms, 없으면 바로)
+       */
+      const hideStatus = (delay = 0) => {
+        clearTimeout(statusTimer);
+        if (!delay) { bubbleStatus.classList.remove("show"); return; }
+        statusTimer = setTimeout(() => bubbleStatus.classList.remove("show"), delay);
+      };
+      /**
+       * 상태 말풍선에 작업 상태 띄우기. 본 말풍선과 따로 있어 혼잣말·대사가 옆에서 같이 보인다
+       * lastSayAt을 갱신하지 않으므로 혼잣말 간격(2.5초)을 막지 않는다
+       * @param text 띄울 문구
+       * @param ms 띄워 둘 시간 (0이면 작업이 끝날 때까지)
+       */
+      const sayStatus = (text: string, ms: number) => {
+        bubbleStatus.textContent = text;
+        bubbleStatus.classList.add("show");
+        clearTimeout(statusTimer);
+        if (ms) hideStatus(ms);
+      };
       const say = (text: string, ms = 3500, mutter = false, kind?: string) => {
         relay("say", [text, ms, mutter, kind]);
+        kind = kind || (mutter ? "mutter" : "other");
+        // 작업 상태는 두 번째 말풍선으로: 본 말풍선(혼잣말·대사)을 덮어쓰지 않는다
+        if (kind === "status") {
+          sayStatus(text, ms);
+          try { window.dispatchEvent(new CustomEvent("dsc:say", { detail: { text, ms, kind } })); } catch {}
+          return;
+        }
         bubble.textContent = text; bubble.classList.add("show");
         lastSayText = text;
         bubble.classList.toggle("mutter", mutter);   // 혼잣말: 점선 말풍선 + 생각하는 시선
@@ -1247,11 +1304,10 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
         startTalk(text, ms || 3000, mutter);   // 말하는 동안 글자 모음에 맞춰 입 움직임
         clearTimeout(bubbleTimer); if (ms) hideBubble(ms);
         // 바깥(자막·로깅·음성 엔진 등)이 대사를 알 수 있게 동기로 알린다. 실패해도 무시.
-        kind = kind || (mutter ? "mutter" : "other");
         try { window.dispatchEvent(new CustomEvent("dsc:say", { detail: { text, ms, kind } })); } catch {}
       };
       /** 말풍선 바로 숨기기 (펫 창에도 전달) */
-      const hush = () => { relay("hush", []); clearTimeout(bubbleTimer); bubble.classList.remove("show"); };
+      const hush = () => { relay("hush", []); clearTimeout(bubbleTimer); bubble.classList.remove("show"); hideStatus(); };
       // ---------- 캔버스만 숨김/표시 (설정에서 켠 사람만 단축키 사용) ----------
       // 캐릭터를 내리지 않고 그리기(티커·rAF)만 멈춰 즉시 전환한다. 설정 저장·재마운트(모델 16.5MB 재로딩)를 피하려는 선택 기능.
       // 숨김 상태에서 화면 구석에 남겨 두는 복구 칩 (단축키가 안 먹어도 클릭으로 되돌릴 수 있게)
@@ -1276,7 +1332,7 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
        */
       const hideForPage = () => {
         pageHiddenApplied = true;
-        canvas.style.display = bubble.style.display = "none";
+        canvas.style.display = "none"; setBubbleDisplay("none");
         veil.style.opacity = "0"; veil.style.pointerEvents = "none";
         setRender(false);
         clearHideChip();
@@ -1295,12 +1351,12 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
         // 같은 프레임 안에 패널을 닫으면 rafIdle은 아직 false다. wakeRaf의 조건과 별개로 구독을 복구한다.
         systemTicker(true);
         if (!hidden && SLEEP.state !== "asleep") {
-          canvas.style.display = bubble.style.display = "";
+          canvas.style.display = ""; setBubbleDisplay("");
           lastPlaceKey = "";
           wakeRaf();
           try { place(); } catch (error) { console.warn("캐릭터 배치 실패:", error); }
         } else {
-          canvas.style.display = bubble.style.display = "none";
+          canvas.style.display = "none"; setBubbleDisplay("none");
           setRender(false);
           wakeRaf();   // 칩·절전 감시가 다시 돌도록 배치 루프를 되돌린다 (숨김/잠든 상태는 place가 그대로 유지)
         }
@@ -1324,7 +1380,7 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
         if (hidden) {
           drag.pending = null; drag.on = false; strokeFrom = null; chestFrom = null;
           hush();
-          canvas.style.display = bubble.style.display = "none";
+          canvas.style.display = "none"; setBubbleDisplay("none");
           veil.style.display = "none";
           document.documentElement.classList.remove("dsc-hover", "dsc-grabbing");
           setRender(false);
@@ -1333,7 +1389,7 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
         } else {
           clearHideChip();
           veil.style.display = "";
-          bubble.style.display = "";
+          setBubbleDisplay("");
           canvas.style.display = "";
           lastPlaceKey = "";
           // 숨김 동안 절전 상태로 들어갔을 수 있으니 즉시 깨워 제자리로 되돌린다
@@ -2815,7 +2871,7 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
           cancelSleepSlide = slide(fleeX, SLEEP_OFF(), () => {
             cancelSleepSlide = null;
             SLEEP.state = "asleep";
-            canvas.style.display = bubble.style.display = "none";
+            canvas.style.display = "none"; setBubbleDisplay("none");
             setRender(false);   // 렌더·모션 업데이트·Worker 프레임 전부 멈춤
           });
         }, 2500);
@@ -3777,6 +3833,8 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
         fleeX: () => fleeX,
         /** 보이는 말풍선 문구, 없으면 빈 문자열 */
         bubble: () => bubble.classList.contains("show") ? bubble.textContent : "",
+        /** 보이는 상태 말풍선(명령 실행 중 등) 문구, 없으면 빈 문자열 */
+        status: () => bubbleStatus.classList.contains("show") ? bubbleStatus.textContent : "",
         lines: TEXT,
         /** 외부 음성 상태 설정. speaking이 false거나 null이면 해제 */
         voice: (state: VoiceState | null) => { voiceState = state && state.speaking !== false ? state : null; },
@@ -3785,7 +3843,7 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
       // ---------- 바깥 펫 창 연결 (창 안 캐릭터 쪽) ----------
       // 연결 상태·송수신·알림 처리·동기화 주기·미리 띄우기·토글은 character/pet-link.js. 여기는 연결이 부르는 캐릭터 동작만 둔다.
       /** 펫 창이 보이기 시작할 때 처리: 창 안 캐릭터는 숨기고 그리기를 멈춤 */
-      const petLinkEnter = () => { skipIntro(); free.anim = null; drag.pending = null; drag.on = false; setRender(false); };
+      const petLinkEnter = () => { skipIntro(); hideStatus(); free.anim = null; drag.pending = null; drag.on = false; setRender(false); };
       /** 펫 창이 제자리에 붙었거나 닫혔을 때 처리: 창 안 제자리로 (창이 좁으면 구석, 매 프레임 다시 계산) */
       const petLinkLeave = () => {
         wakeRaf();
@@ -3982,6 +4040,7 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
       /** 작업이 끝났을 때 반응: 실패 문구가 8초 안에 보였으면 시무룩, 아니면 칭찬해 달라고 함 */
       const reactToFinish = () => {
         if (running) return;
+        hideStatus();   // 작업이 끝났으므로 상태 말풍선을 내린다
         if (performance.now() - lastError < 8000) { flashExp("tears", 5000); flashExp("dizzy", 2500); say(TEXT.error, 5000, false, "reaction"); setMood("sad", 5000); play("droop", 2000); }
         else if (chat.ready("summary")) {   // 결과 요약도 모델이 맡는다 (실패하면 규칙 대사로)
           setMood("idle"); play("laugh", 1700);

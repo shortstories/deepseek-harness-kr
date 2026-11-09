@@ -15,6 +15,7 @@ const sliceBetween = (startText, endText) => {
   assert.ok(end > start, `dsc.js에서 끝 지점을 찾지 못했습니다: ${endText}`)
   return source.slice(start, end)
 }
+const BUBBLE_DISPLAY_LINE = 'const setBubbleDisplay = (value) => { bubble.style.display = bubbleStatus.style.display = value; };'
 const pageHiddenLine = source.match(/const pageHiddenNow = [^\n]+/)?.[0]
 assert.ok(pageHiddenLine, 'pageHiddenNow 정의가 필요합니다')
 
@@ -53,6 +54,7 @@ function contextBase(pageHidden = false) {
     },
     canvas: { style: {} },
     bubble: { style: {} },
+    bubbleStatus: { style: {} },
     veil: { style: {} },
     document: {
       createElement() {
@@ -94,6 +96,7 @@ function runPageContext() {
   const preamble = [
     'let hidden = false, pageHiddenApplied = false, lastPlaceKey = "", placeCalls = 0;',
     pageHiddenLine,
+    BUBBLE_DISPLAY_LINE,
     'const mobileHidden = () => mobileHiddenNow;',
     'const place = () => { placeCalls++; return true; };',
     rafHelpers,
@@ -136,6 +139,7 @@ function runPlaceContext() {
   const preamble = [
     'let hidden = false, pageHiddenApplied = false, lastPlaceKey = "", placeCalls = 0;',
     pageHiddenLine,
+    BUBBLE_DISPLAY_LINE,
     'const mobileHidden = () => mobileHiddenNow;',
     rafHelpers,
   ].join('\n')
