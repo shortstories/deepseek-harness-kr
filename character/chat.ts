@@ -65,6 +65,8 @@ const SUMMARY_MAX = 90;
 const HISTORY_MAX = 20;
 /** 설정 화면에서 켜고 끄면 따라오기까지의 확인 주기 */
 const STATE_REFRESH_MS = 30000;
+/** 혼잣말 요청이 실패한 뒤 다시 시도하기까지 쉬는 시간 (한도·장애 때 호출을 쏟아붓지 않게) */
+const MUTTER_BACKOFF_MS = 30000;
 
 /** 넘칠 때만 줄이고 …로 맺기 (짧으면 그대로) */
 const fit = (line: string, max: number) => (line.length > max ? line.slice(0, max - 2).trimEnd() + "…" : line);
@@ -143,12 +145,17 @@ export function createChat(deps: ChatDeps): ChatApi {
     if (body.trim()) say(body.trim(), ms, mutter, kind);
   };
 
-  /** 추론 요약을 혼잣말 한 줄로 (간격이 아니면 말하지 않고 true) */
+  /** 혼잣말 요청이 실패한 뒤 다시 시도하지 않을 시각 (성공은 mutterMark 가 따로 맡는다) */
+  let mutterBlockedUntil = 0;
+
+  /** 추론 요약을 혼잣말 한 줄로 (간격이 아니면 요청하지 않고 false) */
   const mutter = async (raw: string) => {
+    // 말할 차례가 아니면 요청 자체를 보내지 않는다 — 답을 받아 놓고 버리면 그만큼 토큰을 버린다
+    if (!deps.mutterOpen() || performance.now() < mutterBlockedUntil) return false;
     const got = await request("mutter", raw);
-    if (!got) return false;
+    // 실패하면 잠시 쉰다. 쉬지 않으면 추론 줄이 바뀔 때마다 다시 호출해 한도·장애 상황에서 호출이 쏟아진다
+    if (!got) { mutterBlockedUntil = performance.now() + MUTTER_BACKOFF_MS; return false; }
     const line = fit(got, MUTTER_MAX);
-    if (!deps.mutterOpen()) return true;   // 말할 차례가 아니면 버린다 (요청 자체는 성공)
     deps.mutterMark();
     speakModel(line, Math.min(5200, Math.max(3800, 1500 + line.length * 55)), true, "mutter");
     if (Math.random() < 0.35) play("tilt", 1600);

@@ -181,6 +181,11 @@ test("모델 대화 훅: 상태 조회·역할 판정·태그 분리·우클릭 
   assert.ok(CHAT_SRC.includes("if (r.status === 404 && !warned) {"), "경고는 한 번만");
   assert.ok(CHAT_SRC.includes("const MUTTER_MAX = 60;"), "혼잣말 길이 제한 60자");
   assert.ok(CHAT_SRC.includes("const SUMMARY_MAX = 90;"), "요약 길이 제한 90자");
+  // 혼잣말은 간격을 먼저 보고 요청한다 (받아 놓고 버리면 토큰만 버린다)
+  assert.ok(CHAT_SRC.includes("if (!deps.mutterOpen() || performance.now() < mutterBlockedUntil) return false;"), "요청 전에 간격 확인");
+  // 실패하면 30초 쉰다 (한도·장애 때 추론 줄마다 다시 호출해 호출이 쏟아지던 문제)
+  assert.ok(CHAT_SRC.includes("const MUTTER_BACKOFF_MS = 30000;"), "실패 백오프 상수");
+  assert.ok(CHAT_SRC.includes("if (!got) { mutterBlockedUntil = performance.now() + MUTTER_BACKOFF_MS; return false; }"), "실패하면 쉬기");
   // 세션 모델 빌리기: 지금 보고 있는 세션 id 를 함께 보낸다
   assert.ok(CHAT_SRC.includes('const sessionId = () => (typeof window.__dscSessionId === "string" && window.__dscSessionId ? window.__dscSessionId : undefined);'), "세션 id 읽기");
   assert.ok(CHAT_SRC.includes("const session = sessionId();"), "세션 id 전달");

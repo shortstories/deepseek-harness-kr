@@ -530,6 +530,7 @@
   var SUMMARY_MAX = 90;
   var HISTORY_MAX = 20;
   var STATE_REFRESH_MS = 3e4;
+  var MUTTER_BACKOFF_MS = 3e4;
   var fit = (line, max) => line.length > max ? line.slice(0, max - 2).trimEnd() + "…" : line;
   function createChat(deps) {
     const { say, flashExp, play, expName, lifetime } = deps;
@@ -589,11 +590,15 @@
       }
       if (body.trim()) say(body.trim(), ms, mutter2, kind);
     };
+    let mutterBlockedUntil = 0;
     const mutter = async (raw) => {
+      if (!deps.mutterOpen() || performance.now() < mutterBlockedUntil) return false;
       const got = await request("mutter", raw);
-      if (!got) return false;
+      if (!got) {
+        mutterBlockedUntil = performance.now() + MUTTER_BACKOFF_MS;
+        return false;
+      }
       const line = fit(got, MUTTER_MAX);
-      if (!deps.mutterOpen()) return true;
       deps.mutterMark();
       speakModel(line, Math.min(5200, Math.max(3800, 1500 + line.length * 55)), true, "mutter");
       if (Math.random() < 0.35) play("tilt", 1600);
