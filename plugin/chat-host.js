@@ -226,7 +226,7 @@ function readHistory(value) {
   return out
 }
 
-/** One request's conversation, in the shape both sources accept. */
+/** One request's conversation as plain text turns (the OpenAI-compatible shape). */
 function buildMessages(config, mode, text, history) {
   const messages = []
   if (mode === 'chat') {
@@ -236,6 +236,22 @@ function buildMessages(config, mode, text, history) {
     messages.push({ role: 'user', content: text.slice(0, MAX_MESSAGE_CHARS) })
   }
   return messages
+}
+
+/**
+ * The same turns in the harness message shape: `content` is a block list, and
+ * every assistant turn must name the route that produced it.
+ * @param messages - plain text turns from {@link buildMessages}.
+ * @returns request messages the LLM service accepts.
+ */
+function asBlocks(messages, route) {
+  return messages.map((entry) => entry.role === 'assistant'
+    ? {
+        role: 'assistant',
+        content: [{ type: 'text', text: entry.content }],
+        source: { kind: 'model', provider: route.provider, model: route.model },
+      }
+    : { role: 'user', content: [{ type: 'text', text: entry.content }] })
 }
 
 /**
@@ -322,7 +338,7 @@ async function completeViaSession(config, mode, messages, sessionId, deps, signa
   )
   const options = {
     ...call.config,
-    messages,
+    messages: asBlocks(messages, route),
     system: promptFor(config, mode),
     ...(borrowed === undefined ? {} : { sessionId: borrowed }),
     signal,

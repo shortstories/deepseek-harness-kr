@@ -191,6 +191,48 @@ test('session source borrows the route of a live session and writes nothing to i
     assert.equal(seen[1].options.reasoningEffort, 'off')
     assert.equal(seen[1].options.sessionId, 's1')
     assert.match(seen[1].options.system, /60자를 넘기지 않게/)
+    // LLM 서비스는 content가 블록 목록이어야 하고, assistant 턴은 만든 모델을 밝혀야 한다.
+    assert.deepEqual(seen[1].options.messages, [
+      { role: 'user', content: [{ type: 'text', text: 'The user wants a summary.' }] },
+    ])
+  } finally { await host.close() }
+})
+
+test('session source sends history as blocks with the borrowed route on assistant turns', async () => {
+  const seen = []
+  const llm = {
+    async prepareCall(config) {
+      return {
+        config: { provider: config.provider, model: config.model, maxTokens: config.maxTokens },
+        async *stream(options) {
+          seen.push(options)
+          yield { type: 'text-delta', index: 0, text: '네, 주인님.' }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        },
+      }
+    },
+  }
+  const session = { requestHeader: () => ({ config: { provider: 'deepseek-official', model: 'deepseek-flash' } }) }
+  const host = await startHost(
+    { enabled: true, source: 'session' },
+    { services: { llm, sessions: { get: () => session, list: () => [session] } } },
+  )
+  try {
+    const response = await post(host.url, {
+      mode: 'chat',
+      text: '오늘 뭐 했어?',
+      history: [{ role: 'user', content: '안녕' }, { role: 'assistant', content: '네, 주인님.' }],
+    })
+    assert.equal(response.status, 200)
+    assert.deepEqual(seen[0].messages, [
+      { role: 'user', content: [{ type: 'text', text: '안녕' }] },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: '네, 주인님.' }],
+        source: { kind: 'model', provider: 'deepseek-official', model: 'deepseek-flash' },
+      },
+      { role: 'user', content: [{ type: 'text', text: '오늘 뭐 했어?' }] },
+    ])
   } finally { await host.close() }
 })
 
