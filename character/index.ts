@@ -3561,7 +3561,9 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
       const menuItems = (): MenuItem[] => {
         const list: MenuItem[] = [];
         if (chat.available()) list.push({ label: "대화하기…", run: () => chat.open() });
-        if (!PET && hooks.togglePet) list.push({ label: "창 밖으로 내보내기", run: () => { try { hooks.togglePet?.(); } catch (error) { console.warn("펫 창 내보내기 실패", error); } } });
+        // 바깥 펫 창은 Windows·macOS 데스크톱 앱에서만 뜬다. 웹 프로필(Linux·브라우저)처럼 지원하지 않는 곳에서는
+        // 눌러도 아무 일이 없는 항목이 되므로 메뉴에 넣지 않는다 (link.supported 는 호스트 /pet/poll 이 알려 준다)
+        if (!PET && hooks.togglePet && link.supported) list.push({ label: "창 밖으로 내보내기", run: () => { try { hooks.togglePet?.(); } catch (error) { console.warn("펫 창 내보내기 실패", error); } } });
         if (onSetting) {
           // 소품·옷과 체형은 플러그인 설정에 저장해야 캐릭터가 다음 프레임에 읽는다 (펫 창 메뉴와 같은 통로)
           const outfit = prefs.outfit || {};

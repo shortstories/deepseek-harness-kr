@@ -4462,7 +4462,7 @@
         const menuItems = () => {
           const list = [];
           if (chat.available()) list.push({ label: "대화하기…", run: () => chat.open() });
-          if (!PET && hooks.togglePet) list.push({ label: "창 밖으로 내보내기", run: () => {
+          if (!PET && hooks.togglePet && link.supported) list.push({ label: "창 밖으로 내보내기", run: () => {
             try {
               hooks.togglePet?.();
             } catch (error) {

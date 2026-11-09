@@ -202,7 +202,9 @@ test("우클릭 메뉴: 캐릭터를 눌러도 대화가 바로 열리지 않고
   assert.ok(SRC.includes('if (value === "none") closeMenu();'), "숨길 때 메뉴도 닫기");
   // 항목: 대화하기… 는 모델 대화가 켜져 있을 때만, 창 밖으로 내보내기는 펫 창을 쓸 수 있을 때만
   assert.ok(SRC.includes('if (chat.available()) list.push({ label: "대화하기…", run: () => chat.open() });'), "대화하기 항목");
-  assert.ok(SRC.includes('list.push({ label: "창 밖으로 내보내기", run: () => { try { hooks.togglePet?.(); }'), "내보내기 항목");
+  // 내보내기는 바깥 펫 창을 실제로 띄울 수 있는 곳(Windows·macOS 데스크톱)에서만 넣는다 — 웹 프로필에서는 숨긴다
+  assert.ok(SRC.includes('if (!PET && hooks.togglePet && link.supported) list.push({ label: "창 밖으로 내보내기"'), "내보내기 항목");
+  assert.ok(!SRC.includes('if (!PET && hooks.togglePet) list.push({ label: "창 밖으로 내보내기"'), "지원 안 하면 내보내기 숨김");
   // 항목이 없으면 열지 않고 브라우저 기본 메뉴에 맡긴다 (preventDefault 를 하지 않는다)
   assert.ok(SRC.includes("if (!list.length) { hideMenu(); return false; }"), "항목 없으면 열지 않음");
   // 화면 밖으로 나가지 않게 자리를 잡는다
