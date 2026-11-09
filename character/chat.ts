@@ -41,9 +41,11 @@ export interface ChatApi {
    * ready()는 설정을 읽은 뒤에만 true라서, 화면을 막 띄운 직후 우클릭이 그냥 브라우저 메뉴가 되어 버린다
    */
   available(): boolean;
-  /** 직접 대화 입력 말풍선 열기 */
+  /** 지금 보고 있는 세션 id (플러그인 화면이 채워 둔 값, 없으면 undefined) */
+  sessionId(): string | undefined;
+  /** 명령 입력창 열기 */
   open(): void;
-  /** 직접 대화 입력 말풍선 닫기 */
+  /** 명령 입력창 닫기 */
   close(): void;
   /** 펫 창 메뉴에서 부를 때: 창 안으로 돌아온 뒤 대화 열기 (캐릭터가 넘겨받은 동작) */
   openSoon(): void;
@@ -73,12 +75,15 @@ const fit = (line: string, max: number) => (line.length > max ? line.slice(0, ma
  */
 export function createChat(deps: ChatDeps): ChatApi {
   const { say, flashExp, play, expName, lifetime } = deps;
-  const state: { value: ChatState | null; known: boolean; loading: boolean; history: ChatTurn[]; busy: boolean; panel: HTMLDivElement | null; input: HTMLInputElement | null; log: HTMLDivElement | null; open: boolean } =
-    { value: null, known: false, loading: false, history: [], busy: false, panel: null, input: null, log: null, open: false };
+  const state: { value: ChatState | null; known: boolean; loading: boolean; history: ChatTurn[]; busy: boolean; panel: HTMLDivElement | null; input: HTMLInputElement | null; open: boolean } =
+    { value: null, known: false, loading: false, history: [], busy: false, panel: null, input: null, open: false };
   /** 이 역할을 모델이 맡는지 (펫 창·꺼짐·역할 꺼짐이면 false) */
   const ready = (role: ChatRole) => !deps.petWindow && state.value?.enabled === true && state.value.roles?.[role] === true;
   /** 대화 입구를 열어 볼 만한지 (아직 설정을 못 읽었으면 시도해 본다) */
   const available = () => !deps.petWindow && (state.known ? state.value?.enabled === true && state.value.roles?.chat === true : true);
+
+  /** 지금 보고 있는 세션 id (플러그인 화면이 채워 둔 값). 캐릭터가 전역을 직접 읽지 않도록 이 모듈에서만 본다 */
+  const sessionId = () => (typeof window.__dscSessionId === "string" && window.__dscSessionId ? window.__dscSessionId : undefined);
 
   /** 라우트 없음 경고를 한 번만 남겼는지 */
   let warned = false;
@@ -113,7 +118,8 @@ export function createChat(deps: ChatDeps): ChatApi {
     const body: { mode: ChatRole; text: string; history?: ChatTurn[]; sessionId?: string } = { mode, text };
     if (mode === "chat" && history?.length) body.history = history;
     // 세션 모델을 빌려 쓸 때 어느 세션인지 알려 준다 (플러그인 화면이 채워 둔 값)
-    if (typeof window.__dscSessionId === "string" && window.__dscSessionId) body.sessionId = window.__dscSessionId;
+    const session = sessionId();
+    if (session) body.sessionId = session;
     try {
       const r = await fetch(CHAT_URL, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       if (!r.ok) { if (r.status === 404 || r.status === 503) state.value = null; return null; }   // 꺼졌거나 라우트 없음
@@ -166,66 +172,64 @@ export function createChat(deps: ChatDeps): ChatApi {
     return true;
   };
 
-  /** 대화 기록에 한 줄 붙이기 (줄마다 정리 목록에 쌓이지 않도록 요소를 직접 만들지 않는다) */
-  const append = (who: "me" | "her", text: string) => {
-    if (!state.log) return;
-    state.log.insertAdjacentHTML("beforeend", '<div class="dsc-chat-line ' + who + '"></div>');
-    const line = state.log.lastElementChild;
-    if (line) line.textContent = text;
-    state.log.scrollTop = state.log.scrollHeight;
-  };
-
-  /** 입력 칸의 말을 보내고 답을 말한다 */
+  /** 입력 칸의 명령을 보내고, 답은 채팅 기록이 아니라 캐릭터 말풍선으로만 말한다 */
   const send = async () => {
     if (!state.input || state.busy) return;
     const text = state.input.value.trim();
     if (!text) return;
     state.input.value = "";
-    append("me", text);
     state.busy = true;
+    state.panel?.classList.add("busy");
+    state.input.disabled = true;
     const reply = await request("chat", text, state.history);
     state.busy = false;
-    if (!reply) { append("her", "지금은 대답을 못 했어요. 잠시 뒤에 다시 말 걸어 주세요."); return; }
+    state.panel?.classList.remove("busy");
+    state.input.disabled = false;
+    if (!reply) {
+      // 실패하면 입력창을 열어 둔 채로 알린다 (바로 다시 보낼 수 있게)
+      say("지금은 대답을 못 했어요. 잠시 뒤에 다시 보내 주세요.", 4200, false, "reaction");
+      try { state.input.focus({ preventScroll: true }); } catch {}
+      return;
+    }
     state.history.push({ role: "user", content: text }, { role: "assistant", content: reply });
     if (state.history.length > HISTORY_MAX) state.history = state.history.slice(-HISTORY_MAX);
-    append("her", reply);
     speakModel(reply, Math.min(7000, Math.max(3000, 1200 + reply.length * 45)), false, "reaction");
+    // 답은 캐릭터가 말로 하므로 입력창은 그대로 두고 다음 명령을 바로 적을 수 있게 한다
+    try { state.input?.focus({ preventScroll: true }); } catch {}
   };
 
-  /** 입력 말풍선 만들기 (처음 열 때 한 번) */
+  /** 명령 입력창 만들기 (처음 열 때 한 번) */
   const build = () => {
     const root = document.createElement("div");
     root.id = "dsc-chat";
     root.setAttribute("role", "dialog");
-    root.setAttribute("aria-label", "딥시크쨩에게 말 걸기");
+    root.setAttribute("aria-label", "딥시크쨩에게 명령 보내기");
     root.innerHTML = [
       '<div class="dsc-chat-head"><strong>딥시크쨩</strong><button type="button" data-close aria-label="닫기">×</button></div>',
-      '<div class="dsc-chat-log" data-log aria-live="polite"></div>',
       '<form class="dsc-chat-form" data-form>',
-      '<input type="text" data-input maxlength="500" autocomplete="off" placeholder="말을 걸어 보세요">',
+      '<input type="text" data-input maxlength="500" autocomplete="off" placeholder="명령을 적어 주세요" aria-label="딥시크쨩에게 보낼 명령">',
       '<button type="submit" data-send>보내기</button>',
       '</form>',
+      '<p class="dsc-chat-hint">답은 캐릭터가 말로 알려 줘요</p>',
     ].join("");
     document.body.append(root);
     lifetime.add(() => root.remove());
     state.input = root.querySelector<HTMLInputElement>("[data-input]");
-    state.log = root.querySelector<HTMLDivElement>("[data-log]");
     root.querySelector<HTMLFormElement>("[data-form]")!.addEventListener("submit", (e) => { e.preventDefault(); void send(); });
     root.querySelector("[data-close]")!.addEventListener("click", () => close());
     return root;
   };
 
-  /** 입력 말풍선 열기 (없으면 만든다) */
+  /** 명령 입력창 열기 (없으면 만든다) */
   function open() {
     if (deps.petWindow) return;
     if (!state.panel) state.panel = build();
     state.panel.classList.add("show");
     state.open = true;
     if (!state.known) loadState();   // 설정을 아직 못 읽었으면 열면서 다시 확인한다
-    if (state.log && !state.log.childElementCount) append("her", "네, 주인님. 뭐든 말씀해 주세요.");
     try { state.input?.focus({ preventScroll: true }); } catch {}
   }
-  /** 입력 말풍선 닫기 */
+  /** 명령 입력창 닫기 */
   function close() {
     if (!state.panel) return;
     state.panel.classList.remove("show");
@@ -240,7 +244,7 @@ export function createChat(deps: ChatDeps): ChatApi {
   lifetime.listen(document, "keydown", (e: KeyboardEvent) => { if (e.key === "Escape" && state.open) close(); }, true);
 
   return {
-    ready, available, mutter, summary, open, close,
+    ready, available, mutter, summary, sessionId, open, close,
     /** 펫 창 메뉴 "대화하기…": 창 안으로 돌아온 뒤 잠깐 기다렸다 연다 (돌아오는 그리기와 겹치지 않게) */
     openSoon() { lifetime.timeout(() => { if (!state.open) open(); }, 260); },
   };

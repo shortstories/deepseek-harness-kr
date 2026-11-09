@@ -533,9 +533,10 @@
   var fit = (line, max) => line.length > max ? line.slice(0, max - 2).trimEnd() + "…" : line;
   function createChat(deps) {
     const { say, flashExp, play, expName, lifetime } = deps;
-    const state = { value: null, known: false, loading: false, history: [], busy: false, panel: null, input: null, log: null, open: false };
+    const state = { value: null, known: false, loading: false, history: [], busy: false, panel: null, input: null, open: false };
     const ready = (role) => !deps.petWindow && state.value?.enabled === true && state.value.roles?.[role] === true;
     const available = () => !deps.petWindow && (state.known ? state.value?.enabled === true && state.value.roles?.chat === true : true);
+    const sessionId = () => typeof window.__dscSessionId === "string" && window.__dscSessionId ? window.__dscSessionId : void 0;
     let warned = false;
     const loadState = () => {
       if (deps.petWindow || state.loading) return;
@@ -561,7 +562,8 @@
       if (!ready(mode)) return null;
       const body = { mode, text };
       if (mode === "chat" && history?.length) body.history = history;
-      if (typeof window.__dscSessionId === "string" && window.__dscSessionId) body.sessionId = window.__dscSessionId;
+      const session = sessionId();
+      if (session) body.sessionId = session;
       try {
         const r = await fetch(CHAT_URL, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
         if (!r.ok) {
@@ -610,48 +612,50 @@
       speakModel(fit(got, SUMMARY_MAX), 5e3, false, "reaction");
       return true;
     };
-    const append = (who, text) => {
-      if (!state.log) return;
-      state.log.insertAdjacentHTML("beforeend", '<div class="dsc-chat-line ' + who + '"></div>');
-      const line = state.log.lastElementChild;
-      if (line) line.textContent = text;
-      state.log.scrollTop = state.log.scrollHeight;
-    };
     const send = async () => {
       if (!state.input || state.busy) return;
       const text = state.input.value.trim();
       if (!text) return;
       state.input.value = "";
-      append("me", text);
       state.busy = true;
+      state.panel?.classList.add("busy");
+      state.input.disabled = true;
       const reply = await request("chat", text, state.history);
       state.busy = false;
+      state.panel?.classList.remove("busy");
+      state.input.disabled = false;
       if (!reply) {
-        append("her", "지금은 대답을 못 했어요. 잠시 뒤에 다시 말 걸어 주세요.");
+        say("지금은 대답을 못 했어요. 잠시 뒤에 다시 보내 주세요.", 4200, false, "reaction");
+        try {
+          state.input.focus({ preventScroll: true });
+        } catch {
+        }
         return;
       }
       state.history.push({ role: "user", content: text }, { role: "assistant", content: reply });
       if (state.history.length > HISTORY_MAX) state.history = state.history.slice(-HISTORY_MAX);
-      append("her", reply);
       speakModel(reply, Math.min(7e3, Math.max(3e3, 1200 + reply.length * 45)), false, "reaction");
+      try {
+        state.input?.focus({ preventScroll: true });
+      } catch {
+      }
     };
     const build = () => {
       const root = document.createElement("div");
       root.id = "dsc-chat";
       root.setAttribute("role", "dialog");
-      root.setAttribute("aria-label", "딥시크쨩에게 말 걸기");
+      root.setAttribute("aria-label", "딥시크쨩에게 명령 보내기");
       root.innerHTML = [
         '<div class="dsc-chat-head"><strong>딥시크쨩</strong><button type="button" data-close aria-label="닫기">×</button></div>',
-        '<div class="dsc-chat-log" data-log aria-live="polite"></div>',
         '<form class="dsc-chat-form" data-form>',
-        '<input type="text" data-input maxlength="500" autocomplete="off" placeholder="말을 걸어 보세요">',
+        '<input type="text" data-input maxlength="500" autocomplete="off" placeholder="명령을 적어 주세요" aria-label="딥시크쨩에게 보낼 명령">',
         '<button type="submit" data-send>보내기</button>',
-        "</form>"
+        "</form>",
+        '<p class="dsc-chat-hint">답은 캐릭터가 말로 알려 줘요</p>'
       ].join("");
       document.body.append(root);
       lifetime.add(() => root.remove());
       state.input = root.querySelector("[data-input]");
-      state.log = root.querySelector("[data-log]");
       root.querySelector("[data-form]").addEventListener("submit", (e) => {
         e.preventDefault();
         void send();
@@ -665,7 +669,6 @@
       state.panel.classList.add("show");
       state.open = true;
       if (!state.known) loadState();
-      if (state.log && !state.log.childElementCount) append("her", "네, 주인님. 뭐든 말씀해 주세요.");
       try {
         state.input?.focus({ preventScroll: true });
       } catch {
@@ -688,6 +691,7 @@
       available,
       mutter,
       summary,
+      sessionId,
       open,
       close,
       /** 펫 창 메뉴 "대화하기…": 창 안으로 돌아온 뒤 잠깐 기다렸다 연다 (돌아오는 그리기와 겹치지 않게) */
@@ -1042,6 +1046,7 @@
     const ready = (fn) => document.body ? fn() : addEventListener("DOMContentLoaded", fn, { once: true });
     ready(() => {
       let running = false, lastError = -1e9, lastToolSay = 0, waitingKind = null;
+      let runningSession;
       const listeners = { tool: null };
       const scanAdded = (node) => {
         const found = scanAddedNode(node, { running: running && !!listeners.tool });
@@ -5093,7 +5098,7 @@
             if (running) hush();
           }
         };
-        const reactToFinish = () => {
+        const reactToFinish = (sameSession) => {
           if (running) return;
           hideStatus();
           if (performance.now() - lastError < 8e3) {
@@ -5102,7 +5107,7 @@
             say(TEXT.error, 5e3, false, "reaction");
             setMood("sad", 5e3);
             play("droop", 2e3);
-          } else if (chat.ready("summary")) {
+          } else if (sameSession && chat.ready("summary")) {
             setMood("idle");
             play("laugh", 1700);
             void chat.summary().then((ok) => {
@@ -5124,6 +5129,7 @@
           if (nowRunning && !running) {
             running = true;
             lastError = -1e9;
+            runningSession = chat.sessionId();
             setExp("loading", true);
             if (!waitingKind) {
               say(TEXT.start, 2500, false, "reaction");
@@ -5133,7 +5139,8 @@
           } else if (!nowRunning && running) {
             running = false;
             setExp("loading", false);
-            setTimeout(reactToFinish, 600);
+            const sameSession = runningSession === void 0 || chat.sessionId() === runningSession;
+            setTimeout(() => reactToFinish(sameSession), 600);
           }
         };
         const sleepDue = () => SLEEP.enabled && SLEEP.state === "active" && !running && !waitingKind && !document.hidden && performance.now() - SLEEP.lastActive > SLEEP.minutes * 6e4 && performance.now() - lastSayAt > 5e3 && !bubble.classList.contains("show");

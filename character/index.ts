@@ -92,6 +92,8 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
   ready(() => {
     // ---------- 상태 감시 ----------
     let running = false, lastError = -1e9, lastToolSay = 0, waitingKind: "approval" | "question" | null = null;
+    /** 작업을 시작한 세션 id (세션을 옮겨 생긴 가짜 종료와 진짜 종료를 구분한다) */
+    let runningSession: string | undefined;
     const listeners: { tool: ((text: string) => void) | null } = { tool: null };
     /** 새로 붙은 DOM 노드에서 오류 표시·도구 실행 신호 확인 */
     const scanAdded = (node: Node) => {
@@ -4137,12 +4139,16 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
         if (kind) { say(TEXT[kind], 0, false, "reaction"); setMood("wait"); play("tilt", 1800); }
         else { setMood(running ? "work" : "idle"); if (running) hush(); }
       };
-      /** 작업이 끝났을 때 반응: 실패 문구가 8초 안에 보였으면 시무룩, 아니면 칭찬해 달라고 함 */
-      const reactToFinish = () => {
+      /**
+       * 작업이 끝났을 때 반응: 실패 문구가 8초 안에 보였으면 시무룩, 아니면 칭찬해 달라고 함
+       * @param sameSession 작업을 시작한 세션을 아직 보고 있으면 true. 세션을 옮겨 화면이 사라진 것을
+       *   "턴이 끝났다"로 오인한 경우에는 모델을 부르지 않는다 (남의 세션 답변으로 요약하지 않게)
+       */
+      const reactToFinish = (sameSession: boolean) => {
         if (running) return;
         hideStatus();   // 작업이 끝났으므로 상태 말풍선을 내린다
         if (performance.now() - lastError < 8000) { flashExp("tears", 5000); flashExp("dizzy", 2500); say(TEXT.error, 5000, false, "reaction"); setMood("sad", 5000); play("droop", 2000); }
-        else if (chat.ready("summary")) {   // 결과 요약도 모델이 맡는다 (실패하면 규칙 대사로)
+        else if (sameSession && chat.ready("summary")) {   // 결과 요약도 모델이 맡는다 (실패하면 규칙 대사로)
           setMood("idle"); play("laugh", 1700);
           void chat.summary().then((ok) => { if (!ok) { flashExp("heart", 4000); flashExp("blush", 4000); say(TEXT.done, 4000, false, "reaction"); } });
         }
@@ -4155,12 +4161,16 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
       const reactToRunning = (nowRunning: boolean) => {
         if (nowRunning && !running) {
           running = true; lastError = -1e9;
+          runningSession = chat.sessionId();   // 어느 세션에서 시작했는지 기억 (전환과 구분하려고)
           setExp("loading", true);
           if (!waitingKind) { say(TEXT.start, 2500, false, "reaction"); setMood("work"); play("nod", 1300); }
         } else if (!nowRunning && running) {
           running = false;
           setExp("loading", false);
-          setTimeout(reactToFinish, 600);   // 실패 문구가 늦게 그려질 수 있어 잠깐 기다림
+          // 세션을 옮기면 이전 화면(DOM)이 통째로 사라져 "생성 중지" 버튼도 없어진다.
+          // 그걸 턴 종료로 오인해 남의 세션 답변을 요약하지 않도록, 시작할 때와 같은 세션일 때만 모델을 부른다
+          const sameSession = runningSession === undefined || chat.sessionId() === runningSession;
+          setTimeout(() => reactToFinish(sameSession), 600);   // 실패 문구가 늦게 그려질 수 있어 잠깐 기다림
         }
       };
       /** 절전 판정: 설정된 시간 동안 입력·작업·대기·화면 전환이 없으면(말한 뒤 5초, 말풍선 없음 포함) 잠시 쉬러 갈 때 여부 */

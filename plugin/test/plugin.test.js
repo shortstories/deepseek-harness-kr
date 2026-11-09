@@ -63,8 +63,9 @@ test('sleep cancels departures, protects intro and wakes for waiting cards', asy
       speak: (line) => lines.push(line), say: (line) => lines.push(line), hush() {}, place() {},
       setExp() {}, setMood() {}, play() {}, mutterCheck() {}, flashExp() {},
       TEXT: { approval: 'approval', question: 'question' },
+      chat: { sessionId: () => undefined, ready: () => false, summary: async () => false },
     })
-    vm.runInContext('let fleeX = 0, hidden = false, running = false, waitingKind = null, lastSayAt = 0, lastError = 0;', context)
+    vm.runInContext('let fleeX = 0, hidden = false, running = false, waitingKind = null, lastSayAt = 0, lastError = 0, runningSession;', context)
     vm.runInContext(code.slice(code.indexOf('      const WALK_SPEED'), code.indexOf('      const walkBack')), context)
     vm.runInContext(code.slice(code.indexOf('      const SLEEP ='), code.indexOf('      const onLower')), context)
     // 작업 상태 확인 주기와 그 단계 함수(절전 설정 읽기·대기·작업 반응·절전 판정)를 함께 실행한다

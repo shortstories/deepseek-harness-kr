@@ -54,12 +54,13 @@ test("호출지 kind 태깅: TEXT 5곳 reaction, TOOLS 1곳 status", () => {
   const model = [
     'speakModel(fit(got, SUMMARY_MAX), 5000, false, "reaction")',
     'speakModel(reply, Math.min(7000, Math.max(3000, 1200 + reply.length * 45)), false, "reaction")',
+    'say("지금은 대답을 못 했어요. 잠시 뒤에 다시 보내 주세요.", 4200, false, "reaction")',
   ];
   for (const s of model) assert.ok(CHAT_SRC.includes(s), "모델 호출지 누락: " + s);
   assert.equal(
     (SRC.match(/"reaction"/g) || []).length + (CHAT_SRC.match(/"reaction"/g) || []).length,
-    8,
-    "reaction 태그 8개 (모델 요약·대화 포함)",
+    9,
+    "reaction 태그 9개 (모델 요약·대화·전송 실패 안내 포함)",
   );
   // 상태(도구 실행) 문구는 두 번째 말풍선으로 보낸다: say()의 라우팅 + 도구 호출지
   assert.match(SRC, /if \(kind === "status"\) \{\s+sayStatus\(text, ms\);/, "status 는 상태 말풍선으로 라우팅");
@@ -156,7 +157,7 @@ test("모델 대화 훅: 상태 조회·역할 판정·태그 분리·우클릭 
   assert.ok(CHAT_SRC.includes("const e = expName[n.trim()]; if (e) flashExp(e, Math.max(1200, ms || 3000));"), "태그 → 표정");
   // 혼잣말·요약은 모델이 맡고, 실패하면 규칙 대사로 돌아간다 (캐릭터 쪽 위임 지점)
   assert.ok(SRC.includes('if (chat.ready("mutter")) { void chat.mutter(raw); return; }'), "혼잣말 위임");
-  assert.ok(SRC.includes('else if (chat.ready("summary")) {'), "결과 요약 위임");
+  assert.ok(SRC.includes('else if (sameSession && chat.ready("summary")) {'), "결과 요약 위임 (같은 세션에서만)");
   assert.ok(SRC.includes("void chat.summary().then((ok) => { if (!ok) {"), "요약 실패 시 규칙 대사 폴백");
   // 우클릭 → 메뉴 (창 안 캐릭터에서만). 곧바로 대화를 열지 않고 메뉴에서 고르게 하고, 판정은 캔버스 칸 전체로 넓게 받는다
   assert.ok(
@@ -168,7 +169,11 @@ test("모델 대화 훅: 상태 조회·역할 판정·태그 분리·우클릭 
     CHAT_SRC.includes("const available = () => !deps.petWindow && (state.known ? state.value?.enabled === true && state.value.roles?.chat === true : true);"),
     "설정 확인 전에도 열어 보기",
   );
-  assert.ok(CHAT_SRC.includes("root.id = \"dsc-chat\";"), "입력 말풍선 요소");
+  assert.ok(CHAT_SRC.includes("root.id = \"dsc-chat\";"), "명령 입력창 요소");
+  // 대화 기록을 쌓지 않는다: 답은 캐릭터 말풍선으로만 나가고 입력창에는 로그가 없다
+  assert.ok(!CHAT_SRC.includes("dsc-chat-log"), "채팅 로그 없음");
+  assert.ok(CHAT_SRC.includes('state.input.value = "";'), "보내면 입력 칸을 비운다");
+  assert.ok(CHAT_SRC.includes('placeholder="명령을 적어 주세요"'), "명령 입력 안내");
   // 길이는 지시문보다 느슨하게: 넘칠 때만 …로 줄인다 (문장을 잘라 어색해지지 않게)
   assert.ok(CHAT_SRC.includes('const fit = (line, max) => (line.length > max ? line.slice(0, max - 2).trimEnd() + "…" : line);'), "넘칠 때만 줄이기");
   // 라우트가 없을 때(플러그인만 올리고 dsh-web 을 안 띄운 경우) 조용히 넘어가지 않고 콘솔에 한 번 남긴다
@@ -177,7 +182,14 @@ test("모델 대화 훅: 상태 조회·역할 판정·태그 분리·우클릭 
   assert.ok(CHAT_SRC.includes("const MUTTER_MAX = 60;"), "혼잣말 길이 제한 60자");
   assert.ok(CHAT_SRC.includes("const SUMMARY_MAX = 90;"), "요약 길이 제한 90자");
   // 세션 모델 빌리기: 지금 보고 있는 세션 id 를 함께 보낸다
-  assert.ok(CHAT_SRC.includes('if (typeof window.__dscSessionId === "string" && window.__dscSessionId) body.sessionId = window.__dscSessionId;'), "세션 id 전달");
+  assert.ok(CHAT_SRC.includes('const sessionId = () => (typeof window.__dscSessionId === "string" && window.__dscSessionId ? window.__dscSessionId : undefined);'), "세션 id 읽기");
+  assert.ok(CHAT_SRC.includes("const session = sessionId();"), "세션 id 전달");
+  assert.ok(CHAT_SRC.includes("if (session) body.sessionId = session;"), "요청에 세션 id 싣기");
+  // 세션을 옮겨 화면이 사라진 것을 턴 종료로 오인하면 남의 세션 답변을 요약하게 된다 → 같은 세션일 때만 모델을 부른다
+  assert.ok(SRC.includes("runningSession = chat.sessionId();"), "시작 세션 기억");
+  assert.ok(SRC.includes("const sameSession = runningSession === undefined || chat.sessionId() === runningSession;"), "같은 세션 판정");
+  assert.ok(SRC.includes("setTimeout(() => reactToFinish(sameSession), 600);"), "같은 세션일 때만 요약");
+  assert.ok(SRC.includes("else if (sameSession && chat.ready(\"summary\")) {"), "요약 조건에 세션 확인");
   // 펫 창 메뉴 "대화하기…" 는 창 안으로 돌아온 뒤 입력 말풍선을 연다
   assert.ok(SRC.includes("onChat: () => chat.openSoon(),"), "펫 창 메뉴 연결");
 });
