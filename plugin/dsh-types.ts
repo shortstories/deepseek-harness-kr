@@ -106,6 +106,8 @@ export interface InjectScope {
   effect(fn: () => Dispose, label: string): void
   layout?: { panelInfo?: PanelInfo }
   remote: RemoteService
+  /** 지금 열린 세션을 알려 주는 서비스 (있으면 캐릭터 대화가 세션 모델을 빌려 쓴다) */
+  uiSession?: { adapter?: { current?: { getSnapshot?: () => unknown; subscribe?: (fn: () => void) => (() => void) | void } } }
 }
 
 /** apply(ctx)가 받는 ctx */

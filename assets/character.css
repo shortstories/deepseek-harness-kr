@@ -113,3 +113,46 @@ html body[data-ds-dark-theme] #dsc-hide-chip:hover { background: #262a35; }
   background: #eef1ff; color: #4a5aa0; font: inherit;
 }
 #dsc-pet-panel .dsc-panel-actions button:hover { background: #dfe5ff; }
+
+/* 창 안 캐릭터 우클릭 → 말 걸기 입력 말풍선 */
+#dsc-chat {
+  position: fixed; z-index: 61; right: 16px; bottom: 96px;
+  width: 300px; max-height: 420px; box-sizing: border-box;
+  display: none; flex-direction: column; gap: 8px;
+  padding: 12px 14px 14px; border-radius: 16px; background: #fffffff7; color: #26315e;
+  border: 2px solid #8fa6ff; box-shadow: 0 10px 30px #5f7cf555;
+  font: 600 13px/1.45 "Malgun Gothic", sans-serif; word-break: keep-all;
+  pointer-events: auto;
+}
+#dsc-chat.show { display: flex; }
+#dsc-chat .dsc-chat-head { display: flex; align-items: center; justify-content: space-between; }
+#dsc-chat .dsc-chat-head strong { font-size: 15px; }
+#dsc-chat .dsc-chat-head button {
+  width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%;
+  background: #eef1ff; color: #4a5aa0; font-size: 17px; line-height: 1; cursor: pointer;
+}
+#dsc-chat .dsc-chat-head button:hover { background: #dfe5ff; }
+#dsc-chat .dsc-chat-log {
+  flex: 1 1 auto; min-height: 90px; max-height: 280px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px; padding: 2px;
+}
+#dsc-chat .dsc-chat-line {
+  max-width: 88%; padding: 7px 10px; border-radius: 12px; font-weight: 500;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+#dsc-chat .dsc-chat-line.her { align-self: flex-start; background: #eef1ff; color: #33406f; }
+#dsc-chat .dsc-chat-line.me { align-self: flex-end; background: #8fa6ff; color: #fff; }
+#dsc-chat .dsc-chat-form { display: flex; gap: 6px; }
+#dsc-chat .dsc-chat-form input {
+  flex: 1 1 auto; min-width: 0; padding: 7px 10px; border-radius: 10px;
+  border: 1px solid #c9d3ff; background: #fff; color: inherit; font: inherit; font-weight: 500;
+}
+#dsc-chat .dsc-chat-form input:focus { outline: 2px solid #8fa6ff; outline-offset: 1px; }
+#dsc-chat .dsc-chat-form button {
+  flex: 0 0 auto; padding: 7px 12px; border: 0; border-radius: 10px; cursor: pointer;
+  background: #8fa6ff; color: #fff; font: inherit;
+}
+#dsc-chat .dsc-chat-form button:hover { background: #7c95f5; }
+html body[data-ds-dark-theme] #dsc-chat { background: #1d1f27f7; color: #dfe4ff; border-color: #5f6fae; }
+html body[data-ds-dark-theme] #dsc-chat .dsc-chat-line.her { background: #2a2e3d; color: #dfe4ff; }
+html body[data-ds-dark-theme] #dsc-chat .dsc-chat-form input { background: #14161d; border-color: #3a4055; color: #dfe4ff; }

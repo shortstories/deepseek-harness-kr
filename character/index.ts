@@ -13,6 +13,7 @@ import { chordDown, chordWithinGrace, chordUp, type Chord } from "./chord.ts";
 import { clamp, noise, S, spring, sstep, addGesture, blinkClose, seg, coverForearm } from "./motion.ts";
 import { readStatus, scanAddedNode, readThought, thoughtLine } from "./harness-signals.ts";
 import { createPetLink, type PetMessage } from "./pet-link.ts";
+import { createChat } from "./chat.ts";
 import { log } from "./log.ts";
 import { parseSyllables } from "./speech.ts";
 import { meshBounds, meshHit } from "./hit.ts";
@@ -380,6 +381,8 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
         onUse: () => { petUsed = true; },
         /** 펫 창 메뉴에서 바꾼 설정을 플러그인 설정에 저장하도록 전달 */
         onConfig: (key, value) => onSetting?.(key, value),
+        /** 펫 창 메뉴 "대화하기…": 창 안으로 돌아온 뒤 대화 입력을 연다 */
+        onChat: () => chat.openSoon(),
         /** 펫 창이 열려 창 안 캐릭터가 물러날 때 */
         onEnter: () => petLinkEnter(),
         /** 펫 창이 닫혀 창 안 캐릭터가 돌아올 때 */
@@ -3006,6 +3009,18 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
         const canvasRect = canvas.getBoundingClientRect(), body = bodyRect(canvasRect.left, canvasRect.top, curK);
         return cx >= body.l && cx <= body.r && cy >= body.t && cy <= body.b;
       };
+      /**
+       * 우클릭 대화용 판정. 몸 영역(bodyRect)은 캔버스 양옆을 잘라내 실제보다 좁아서, 조금만 빗나가도 브라우저 메뉴가 떴다.
+       * 대화는 그림이 있는 캔버스 칸 전체(+여백)로 받고, 그 위에 놓인 버튼·입력 칸은 그대로 통과시킨다
+       * @param cx 창 x 좌표(clientX)
+       * @param cy 창 y 좌표(clientY)
+       */
+      const overChat = (cx: number, cy: number) => {
+        if (canvas.style.display === "none") return false;
+        const rect = canvas.getBoundingClientRect(), padX = Math.max(6, rect.width * 0.04), padY = Math.max(6, rect.height * 0.04);
+        if (cx < rect.left - padX || cx > rect.right + padX || cy < rect.top - padY || cy > rect.bottom + padY) return false;
+        return !document.elementFromPoint(cx, cy)?.closest(UI_HIT);
+      };
       /** 산책으로 걷는 중 여부 (출발한 뒤 ~ 제자리 도착 전) */
       const walking = () => walk.phase === "out" || walk.phase === "away" || walk.phase === "in";
       /**
@@ -3477,7 +3492,11 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
       life.listen(document, "contextmenu", (e) => {
         if (hidden) return;
         if (drag.pending || drag.on) { e.preventDefault(); e.stopPropagation(); return; }
-        if (!PET) {   // 터치 화면에서 캐릭터를 길게 누를 때 뜨는 브라우저 메뉴·선택을 막는다 (집기가 풀리던 원인). 데스크톱 우클릭은 그대로 둔다
+        if (!PET) {
+          // 창 안: 캐릭터를 우클릭하면 말을 거는 입력 말풍선을 연다 (모델 대화의 직접 대화가 켜져 있을 때만).
+          // 설정을 아직 못 읽었을 때도 열어 본다 — 첫 화면에서 몇 초 동안 우클릭이 그냥 브라우저 메뉴가 되던 문제
+          if (chat.available() && overChat(e.clientX, e.clientY)) { e.preventDefault(); e.stopPropagation(); chat.open(); return; }
+          // 터치 화면에서 캐릭터를 길게 누를 때 뜨는 브라우저 메뉴·선택을 막는다 (집기가 풀리던 원인). 데스크톱 우클릭은 그대로 둔다
           if (coarsePointer() && overBody(e.clientX, e.clientY)) { e.preventDefault(); e.stopPropagation(); }
           return;
         }
@@ -3709,6 +3728,15 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
         lastToolSay = now; say(text, 0, false, "status");
       };
       let lastThought = "", lastMutterAt = 0;
+      // 캐릭터 대화: 켜져 있으면 혼잣말·결과 요약·직접 대화를 모델이 맡는다 (character/chat.ts)
+      // 규칙 기반 반응은 그대로 두고, 모델이 실패하거나 꺼져 있으면 아래 규칙 쪽으로 돌아간다
+      const chat = createChat({
+        say, flashExp, play, expName: EXP_NAME, lifetime: life, petWindow: !!PET,
+        /** 혼잣말 간격(6초)·다른 말 뒤(2.5초)를 지켰는지 */
+        mutterOpen: () => performance.now() - lastMutterAt >= 6000 && performance.now() - lastSayAt >= 2500,
+        /** 혼잣말을 한 것으로 표시 */
+        mutterMark: () => { lastMutterAt = performance.now(); },
+      });
       /**
        * 추론 혼잣말: 작업 중 화면의 추론 요약 줄(방금 끝난 문단의 첫 줄)이 바뀌면, 한국어·영어 문장을 가끔 중얼거림
        * 혼잣말 사이 6초, 다른 말 뒤 2.5초 간격 유지
@@ -3719,6 +3747,8 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
         lastThought = raw;
         const now = performance.now();
         if (now - lastMutterAt < 6000 || now - lastSayAt < 2500) return;
+        // 모델이 켜져 있으면 추론 요약을 그대로 넘겨 한국어 한 문장으로 받는다 (규칙 변환은 실패했을 때만)
+        if (chat.ready("mutter")) { void chat.mutter(raw); return; }
         const line = thoughtLine(raw);
         if (!line) return;
         lastMutterAt = now;
@@ -3953,6 +3983,10 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
       const reactToFinish = () => {
         if (running) return;
         if (performance.now() - lastError < 8000) { flashExp("tears", 5000); flashExp("dizzy", 2500); say(TEXT.error, 5000, false, "reaction"); setMood("sad", 5000); play("droop", 2000); }
+        else if (chat.ready("summary")) {   // 결과 요약도 모델이 맡는다 (실패하면 규칙 대사로)
+          setMood("idle"); play("laugh", 1700);
+          void chat.summary().then((ok) => { if (!ok) { flashExp("heart", 4000); flashExp("blush", 4000); say(TEXT.done, 4000, false, "reaction"); } });
+        }
         else { flashExp("heart", 4000); flashExp("blush", 4000); say(TEXT.done, 4000, false, "reaction"); setMood("idle"); play("laugh", 1700); }
       };
       /**

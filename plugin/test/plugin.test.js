@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url'
 import vm from 'node:vm'
 import { JSDOM } from 'jsdom'
 import { apply as hostApply, createAssetHandler, ASSET_PATH, Config, readLive, STATUS_PATH } from '../host.js'
+import { CHAT_ROUTE, CHAT_STATE_ROUTE } from '../chat-host.js'
 import { PET_PATH } from '../pet-host.js'
 
 const packageName = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8')).name
@@ -751,7 +752,7 @@ test('Host asset route serves only its files and unregisters with the plugin', a
     hostApply({ effect(fn) { disposers.push(fn()) }, webServer: { register(route) { registrations.set(route.path, route); return () => registrations.delete(route.path) } } }, undefined, { applyIcon })
     assert.deepEqual(icons, [true], 'app icon defaults to on, through the injected function only')
     assert.equal(registrations.get(ASSET_PATH).kind, 'prefix')
-    assert.deepEqual([...registrations.keys()].sort(), [ASSET_PATH, STATUS_PATH, PET_PATH, '/dsh-tts/speak', '/dsh-tts/state'].sort())
+    assert.deepEqual([...registrations.keys()].sort(), [ASSET_PATH, STATUS_PATH, PET_PATH, '/dsh-tts/speak', '/dsh-tts/state', CHAT_ROUTE, CHAT_STATE_ROUTE].sort())
     for (const dispose of disposers) dispose()
     assert.equal(registrations.size, 0)
   } finally {

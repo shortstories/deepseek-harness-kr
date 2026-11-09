@@ -225,6 +225,9 @@ app.whenReady().then(() => {
       case 'menu': {
         const size = Number(menuState.size) || 1, outfit = menuState.outfit || {}
         Menu.buildFromTemplate([
+          { label: '대화하기…',
+            /** 창 안으로 돌아와 캐릭터에게 말을 거는 입력 말풍선 열기 */
+            click: () => { toPage({ type: 'home' }); toHost({ type: 'chat' }) } },
           { label: '설정…',
             /** 설정 패널 열기 */
             click: () => toPage({ type: 'panel', open: true }) },

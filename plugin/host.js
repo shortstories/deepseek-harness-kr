@@ -6,8 +6,10 @@ import { extname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { pipeline } from 'node:stream/promises'
 import { normalize as normalizeTts } from '../plugins/dsh-tts/src/config.js'
-import { registerSpeechRoutes } from '../plugins/dsh-tts/src/index.js'
+import { credentialResolver, registerSpeechRoutes } from '../plugins/dsh-tts/src/index.js'
 import { createPetHandler, createPetManager, PET_PATH } from './pet-host.js'
+import { registerChatRoutes } from './chat-host.js'
+import { normalizeChat } from './chat-config.js'
 import { applyShortcutIcon } from './app-icon.js'
 import { OUTFIT_ITEMS, BODY_TYPES } from '../shared/settings.js'
 
@@ -26,7 +28,7 @@ export const inject = ['webServer', 'connection']
  */
 /**
  * 설정 중 이 파일이 읽는 값 (volatile 참조일 수 있어 readLive로 읽음)
- * @typedef {{ tts?: unknown, appIcon?: unknown }} HostConfig
+ * @typedef {{ tts?: unknown, chat?: unknown, appIcon?: unknown }} HostConfig
  */
 
 // 말풍선 음성(TTS). 설정 화면이 쓰는 값은 모두 volatile이어야 한다(Settings는 volatile 필드만 쓴다).
@@ -82,6 +84,31 @@ export const Config = z.object({
   ...Object.fromEntries(OUTFIT_ITEMS.map(({ key }) => [key, z.boolean().default(false).volatile()])),
   bodyType: z.union(BODY_TYPES.map(({ key }) => z.const(key))).default('default').volatile(),
   tts: TtsConfig,
+  // 캐릭터 대화(모델 연결): 켜면 혼잣말·결과 요약·직접 대화를 모델이 맡는다 (기본은 규칙 기반)
+  // 준비하지 않은 필드는 비워 두면 되고, 실제 값 검사는 요청마다 normalizeChat이 맡는다.
+  chat: z.object({
+    enabled: live(z.boolean().default(false)),
+    source: live(z.string().default('api')),
+    openai: z.object({
+      baseUrl: live(z.string().default('')),
+      model: live(z.string().default('')),
+      apiKeyEnv: live(z.string().default('DSH_CHAT_API_KEY')),
+      timeoutMs: live(z.number().min(1000).max(600000).default(20000)),
+      // 비워 두면 역할별 기본값을 쓴다 (0도 유효한 값이라 null과 구분해야 한다)
+      temperature: live(z.union([z.number().min(0).max(2), z.const(null)]).default(null)),
+    }),
+    session: z.object({ reasoningEffort: live(z.string().default('off')) }),
+    roles: z.object({
+      mutter: live(z.boolean().default(true)),
+      summary: live(z.boolean().default(true)),
+      chat: live(z.boolean().default(true)),
+    }),
+    prompts: z.object({
+      mutter: live(z.string().default('')),
+      summary: live(z.string().default('')),
+      chat: live(z.string().default('')),
+    }),
+  }),
   // 시작할 때 가운데에서 크게 인사하는 등장 연출 (끄면 처음부터 제자리에 뜬다)
   intro: z.boolean().default(true).volatile(),
   // 모바일(터치 전용) 화면에서도 캐릭터를 보여 줄지 (기본 표시)
@@ -183,6 +210,8 @@ export function apply(ctx, config, { applyIcon = applyShortcutIcon } = {}) {
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: ASSET_PATH, handler: createAssetHandler() }), 'deepseek-harness-kr: assets')
   // 말풍선 음성: 설정 화면에서 바꾼 값(volatile)을 요청마다 다시 읽는다. 꺼져 있으면 404.
   registerSpeechRoutes(ctx, () => normalizeTts(readLive(config?.tts)))
+  // 캐릭터 대화: 설정 화면에서 바꾼 값(volatile)을 요청마다 다시 읽는다. 꺼져 있으면 404(없는 라우트와 같음).
+  registerChatRoutes(ctx, () => normalizeChat(readLive(config?.chat)), { resolveApiKey: credentialResolver(ctx) })
   /** 펫·상태 경로 요청의 거절 상태 코드. DSH 연결 서비스 검사기 결과(통과면 undefined), 검사기가 없으면 503 @param {IncomingMessage} req */
   const rejection = (req) => { const connection = ctx.connection; return typeof connection?.requestRejection === 'function' ? connection.requestRejection(req) : 503 }
   /** 앱 바로가기 아이콘의 마지막 실패 사유 (성공하거나 해당 없으면 null) */

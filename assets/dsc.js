@@ -27,7 +27,7 @@
   var homeLayout = ({ vp, r, maxK, W, visW, H, visH, minK, allowAbove = true }) => {
     const rightX = (k2) => vp.left + vp.w - 4 - (W + visW) / 2 * k2;
     const bottomY = (k2) => vp.top + vp.h - H * k2;
-    const fit = (k2, above) => {
+    const fit2 = (k2, above) => {
       const cap = above ? Math.min(maxK, (r.top - vp.top - HOME_GAP) / H) : Math.min(maxK, (vp.w - HOME_GAP) / visW);
       const want = k2 * (above ? MOBILE_ABOVE_SCALE : 1);
       const scale = Math.max(MIN_SHOW_K, Math.min(cap, want));
@@ -41,8 +41,8 @@
     if (!allowAbove) return { k: sideK, x: rightX(sideK), y: bottomY(sideK), above: false };
     const aboveRoom = r.top - vp.top - HOME_GAP - BUBBLE_ROOM;
     const aboveK = Math.min(maxK, aboveRoom / H, (vp.w - HOME_GAP) / visW);
-    if (sideK >= Math.min(minK, maxK)) return fit(sideK, false);
-    if (aboveK >= MIN_SHOW_K) return fit(aboveK, true);
+    if (sideK >= Math.min(minK, maxK)) return fit2(sideK, false);
+    if (aboveK >= MIN_SHOW_K) return fit2(aboveK, true);
     const k = Math.min(maxK, MIN_SHOW_K);
     return { k, x: rightX(k), y: bottomY(k), above: false, noSafe: true };
   };
@@ -427,6 +427,11 @@
         link.leave();
       } else if (event.type === "hidden") onHidden();
       else if (event.type === "config") onConfig(event.list);
+      else if (event.type === "chat") {
+        link.follow = null;
+        link.leave();
+        deps.onChat?.();
+      }
     };
     link.poll = () => {
       if (link.polling) return;
@@ -515,6 +520,178 @@
       link.post("open", { from: pose, to: pose, seq: ++link.seq });
     };
     return link;
+  }
+
+  // character/chat.ts
+  var CHAT_STATE_URL = "/deepseek-harness-kr/chat/state";
+  var CHAT_URL = "/deepseek-harness-kr/chat";
+  var CHAT_TAG = /^\[([^\]]{1,24})\]\s*/;
+  var MUTTER_MAX = 60;
+  var SUMMARY_MAX = 90;
+  var HISTORY_MAX = 20;
+  var STATE_REFRESH_MS = 3e4;
+  var fit = (line, max) => line.length > max ? line.slice(0, max - 2).trimEnd() + "…" : line;
+  function createChat(deps) {
+    const { say, flashExp, play, expName, lifetime } = deps;
+    const state = { value: null, known: false, loading: false, history: [], busy: false, panel: null, input: null, log: null, open: false };
+    const ready = (role) => !deps.petWindow && state.value?.enabled === true && state.value.roles?.[role] === true;
+    const available = () => !deps.petWindow && (state.known ? state.value?.enabled === true && state.value.roles?.chat === true : true);
+    const loadState = () => {
+      if (deps.petWindow || state.loading) return;
+      state.loading = true;
+      fetch(CHAT_STATE_URL, { headers: { accept: "application/json" } }).then((r) => {
+        if (!r.ok) return null;
+        return r.json();
+      }).then((s) => {
+        state.value = s && typeof s === "object" ? s : null;
+        state.known = true;
+      }).catch(() => {
+      }).finally(() => {
+        state.loading = false;
+      });
+    };
+    loadState();
+    lifetime.interval(loadState, STATE_REFRESH_MS);
+    const request = async (mode, text, history) => {
+      if (!ready(mode)) return null;
+      const body = { mode, text };
+      if (mode === "chat" && history?.length) body.history = history;
+      if (typeof window.__dscSessionId === "string" && window.__dscSessionId) body.sessionId = window.__dscSessionId;
+      try {
+        const r = await fetch(CHAT_URL, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+        if (!r.ok) {
+          if (r.status === 404 || r.status === 503) state.value = null;
+          return null;
+        }
+        const data = await r.json();
+        return typeof data?.text === "string" && data.text.trim() ? data.text.trim() : null;
+      } catch {
+        return null;
+      }
+    };
+    const speakModel = (text, ms, mutter2, kind) => {
+      let body = text, tag = null;
+      const m = body.match(CHAT_TAG);
+      if (m) {
+        tag = m[1];
+        body = body.slice(m[0].length);
+      }
+      if (tag) for (const n of tag.split(",")) {
+        const e = expName[n.trim()];
+        if (e) flashExp(e, Math.max(1200, ms || 3e3));
+      }
+      if (body.trim()) say(body.trim(), ms, mutter2, kind);
+    };
+    const mutter = async (raw) => {
+      const got = await request("mutter", raw);
+      if (!got) return false;
+      const line = fit(got, MUTTER_MAX);
+      if (!deps.mutterOpen()) return true;
+      deps.mutterMark();
+      speakModel(line, Math.min(5200, Math.max(3800, 1500 + line.length * 55)), true, "mutter");
+      if (Math.random() < 0.35) play("tilt", 1600);
+      return true;
+    };
+    const lastAnswer = () => {
+      const rows = [...document.querySelectorAll('[data-chat-flow-kind="assistant-step"]')];
+      const row = rows.pop();
+      return row ? (row.innerText || "").trim().slice(0, 4e3) : "";
+    };
+    const summary = async () => {
+      const answer = lastAnswer();
+      if (!answer) return false;
+      const got = await request("summary", answer);
+      if (!got) return false;
+      speakModel(fit(got, SUMMARY_MAX), 5e3, false, "reaction");
+      return true;
+    };
+    const append = (who, text) => {
+      if (!state.log) return;
+      state.log.insertAdjacentHTML("beforeend", '<div class="dsc-chat-line ' + who + '"></div>');
+      const line = state.log.lastElementChild;
+      if (line) line.textContent = text;
+      state.log.scrollTop = state.log.scrollHeight;
+    };
+    const send = async () => {
+      if (!state.input || state.busy) return;
+      const text = state.input.value.trim();
+      if (!text) return;
+      state.input.value = "";
+      append("me", text);
+      state.busy = true;
+      const reply = await request("chat", text, state.history);
+      state.busy = false;
+      if (!reply) {
+        append("her", "지금은 대답을 못 했어요. 잠시 뒤에 다시 말 걸어 주세요.");
+        return;
+      }
+      state.history.push({ role: "user", content: text }, { role: "assistant", content: reply });
+      if (state.history.length > HISTORY_MAX) state.history = state.history.slice(-HISTORY_MAX);
+      append("her", reply);
+      speakModel(reply, Math.min(7e3, Math.max(3e3, 1200 + reply.length * 45)), false, "reaction");
+    };
+    const build = () => {
+      const root = document.createElement("div");
+      root.id = "dsc-chat";
+      root.setAttribute("role", "dialog");
+      root.setAttribute("aria-label", "딥시크쨩에게 말 걸기");
+      root.innerHTML = [
+        '<div class="dsc-chat-head"><strong>딥시크쨩</strong><button type="button" data-close aria-label="닫기">×</button></div>',
+        '<div class="dsc-chat-log" data-log aria-live="polite"></div>',
+        '<form class="dsc-chat-form" data-form>',
+        '<input type="text" data-input maxlength="500" autocomplete="off" placeholder="말을 걸어 보세요">',
+        '<button type="submit" data-send>보내기</button>',
+        "</form>"
+      ].join("");
+      document.body.append(root);
+      lifetime.add(() => root.remove());
+      state.input = root.querySelector("[data-input]");
+      state.log = root.querySelector("[data-log]");
+      root.querySelector("[data-form]").addEventListener("submit", (e) => {
+        e.preventDefault();
+        void send();
+      });
+      root.querySelector("[data-close]").addEventListener("click", () => close());
+      return root;
+    };
+    function open() {
+      if (deps.petWindow) return;
+      if (!state.panel) state.panel = build();
+      state.panel.classList.add("show");
+      state.open = true;
+      if (!state.known) loadState();
+      if (state.log && !state.log.childElementCount) append("her", "네, 주인님. 뭐든 말씀해 주세요.");
+      try {
+        state.input?.focus({ preventScroll: true });
+      } catch {
+      }
+    }
+    function close() {
+      if (!state.panel) return;
+      state.panel.classList.remove("show");
+      state.open = false;
+    }
+    lifetime.listen(document, "pointerdown", (e) => {
+      if (!state.open || !state.panel || state.panel.contains(e.target)) return;
+      close();
+    }, true);
+    lifetime.listen(document, "keydown", (e) => {
+      if (e.key === "Escape" && state.open) close();
+    }, true);
+    return {
+      ready,
+      available,
+      mutter,
+      summary,
+      open,
+      close,
+      /** 펫 창 메뉴 "대화하기…": 창 안으로 돌아온 뒤 잠깐 기다렸다 연다 (돌아오는 그리기와 겹치지 않게) */
+      openSoon() {
+        lifetime.timeout(() => {
+          if (!state.open) open();
+        }, 260);
+      }
+    };
   }
 
   // character/speech.ts
@@ -1139,6 +1316,8 @@
           },
           /** 펫 창 메뉴에서 바꾼 설정을 플러그인 설정에 저장하도록 전달 */
           onConfig: (key, value) => onSetting?.(key, value),
+          /** 펫 창 메뉴 "대화하기…": 창 안으로 돌아온 뒤 대화 입력을 연다 */
+          onChat: () => chat.openSoon(),
           /** 펫 창이 열려 창 안 캐릭터가 물러날 때 */
           onEnter: () => petLinkEnter(),
           /** 펫 창이 닫혀 창 안 캐릭터가 돌아올 때 */
@@ -3725,6 +3904,12 @@
           const canvasRect = canvas.getBoundingClientRect(), body = bodyRect(canvasRect.left, canvasRect.top, curK);
           return cx >= body.l && cx <= body.r && cy >= body.t && cy <= body.b;
         };
+        const overChat = (cx, cy) => {
+          if (canvas.style.display === "none") return false;
+          const rect = canvas.getBoundingClientRect(), padX = Math.max(6, rect.width * 0.04), padY = Math.max(6, rect.height * 0.04);
+          if (cx < rect.left - padX || cx > rect.right + padX || cy < rect.top - padY || cy > rect.bottom + padY) return false;
+          return !document.elementFromPoint(cx, cy)?.closest(UI_HIT);
+        };
         const walking = () => walk.phase === "out" || walk.phase === "away" || walk.phase === "in";
         const canPullChest = (now) => bodyWeight <= 0.5 && fleeX === 0 && !walk.phase && intro.phase === "done" && !drag.on && !link.opening && now >= sulkUntil;
         const armChestLong = () => {
@@ -4210,6 +4395,12 @@
             return;
           }
           if (!PET) {
+            if (chat.available() && overChat(e.clientX, e.clientY)) {
+              e.preventDefault();
+              e.stopPropagation();
+              chat.open();
+              return;
+            }
             if (coarsePointer() && overBody(e.clientX, e.clientY)) {
               e.preventDefault();
               e.stopPropagation();
@@ -4418,12 +4609,30 @@
           say(text, 0, false, "status");
         };
         let lastThought = "", lastMutterAt = 0;
+        const chat = createChat({
+          say,
+          flashExp,
+          play,
+          expName: EXP_NAME,
+          lifetime: life,
+          petWindow: !!PET,
+          /** 혼잣말 간격(6초)·다른 말 뒤(2.5초)를 지켰는지 */
+          mutterOpen: () => performance.now() - lastMutterAt >= 6e3 && performance.now() - lastSayAt >= 2500,
+          /** 혼잣말을 한 것으로 표시 */
+          mutterMark: () => {
+            lastMutterAt = performance.now();
+          }
+        });
         const mutterCheck = () => {
           const raw = readThought(document);
           if (!raw || raw === lastThought) return;
           lastThought = raw;
           const now = performance.now();
           if (now - lastMutterAt < 6e3 || now - lastSayAt < 2500) return;
+          if (chat.ready("mutter")) {
+            void chat.mutter(raw);
+            return;
+          }
           const line = thoughtLine(raw);
           if (!line) return;
           lastMutterAt = now;
@@ -4700,6 +4909,16 @@
             say(TEXT.error, 5e3, false, "reaction");
             setMood("sad", 5e3);
             play("droop", 2e3);
+          } else if (chat.ready("summary")) {
+            setMood("idle");
+            play("laugh", 1700);
+            void chat.summary().then((ok) => {
+              if (!ok) {
+                flashExp("heart", 4e3);
+                flashExp("blush", 4e3);
+                say(TEXT.done, 4e3, false, "reaction");
+              }
+            });
           } else {
             flashExp("heart", 4e3);
             flashExp("blush", 4e3);

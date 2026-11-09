@@ -16,6 +16,8 @@ declare global {
     __dscPetMode?: boolean;
     /** 펫 창 preload가 넣어 주는 메인 프로세스와의 통로 */
     dscPet?: PetBridge;
+    /** 지금 열린 세션 id (플러그인 화면이 넣어 둠). 세션 모델을 빌려 쓸 때 쓴다 */
+    __dscSessionId?: string;
     /** 옛 WebKit의 AudioContext */
     webkitAudioContext?: typeof AudioContext;
   }

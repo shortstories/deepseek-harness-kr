@@ -34,6 +34,8 @@ export interface PetLinkDeps {
   onEnter(): void;
   onLeave(): void;
   onConfig(key: string, value: unknown): void;
+  /** 펫 창 우클릭 메뉴 "대화하기…": 창 안으로 돌아와 입력 말풍선을 연다 */
+  onChat?(): void;
   snapshot(): PetMessage[];
   dragMessages(): PetMessage[];
   dockState(): { dock: unknown; outfit: unknown };
@@ -153,6 +155,8 @@ export function createPetLink(deps: PetLinkDeps): PetLink {
     else if (event.type === "attach" || event.type === "closed" || event.type === "error") { link.follow = null; link.leave(); }
     else if (event.type === "hidden") onHidden();
     else if (event.type === "config") onConfig(event.list);
+    // 펫 창 메뉴 "대화하기…": 창 안으로 돌아온 뒤 입력 말풍선을 연다
+    else if (event.type === "chat") { link.follow = null; link.leave(); deps.onChat?.(); }
   };
 
   /** 호스트에 펫 상태·알림 조회 (이전 조회가 끝나기 전이면 건너뜀) */
