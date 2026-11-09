@@ -3604,12 +3604,14 @@ export function createCharacter({ base, life, pet = null, prefs: initialPrefs = 
         row.classList.add("open");
         const sub = row.querySelector<HTMLElement>(".dsc-submenu");
         if (!sub) return;
+        // 지난번에 밀어 둔 자국을 먼저 지우고 잰다 (남겨 두면 잰 위치가 기준이 되어 열 때마다 자리가 어긋난다)
         sub.classList.remove("flip");
+        sub.style.top = "";
         const box = sub.getBoundingClientRect();
         if (box.right > innerWidth - 8) sub.classList.add("flip");
-        // 위아래로도 넘치지 않게 민다
-        if (box.bottom > innerHeight - 8) sub.style.top = -(box.bottom - innerHeight + 10) + "px";
-        else sub.style.top = "";
+        // 위아래로 넘치면 위로 민다. 기준 top은 CSS의 -6px이고, 화면 위로도 나가지 않게 자른다
+        const rise = Math.min(box.bottom - (innerHeight - 8), Math.max(0, box.top - 8));
+        if (rise > 0) sub.style.top = `${-(rise + 6)}px`;
       }
       /**
        * 항목 목록을 메뉴 상자에 채운다 (children이 있으면 한 겹 서브메뉴)

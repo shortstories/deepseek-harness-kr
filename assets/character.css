@@ -86,7 +86,7 @@ html body[data-ds-dark-theme] #dsc-bubble-status {
   box-shadow: 0 10px 28px #5f7cf53d; padding: 6px; color: #26315e; pointer-events: auto;
   font: 600 13px/1.35 "Malgun Gothic", sans-serif;
 }
-#dsc-menu .dsc-menu-row.open .dsc-submenu { display: block; }
+#dsc-menu .dsc-menu-row.open .dsc-submenu { display: block; max-height: calc(100vh - 16px); overflow-y: auto; }
 #dsc-menu .dsc-submenu.flip { left: auto; right: 100%; margin-left: 0; margin-right: 4px; }
 html body[data-ds-dark-theme] #dsc-menu { background: #1b1e26f2; color: #dbe1f5; border-color: #414d7d; box-shadow: 0 10px 28px #00000066; }
 html body[data-ds-dark-theme] #dsc-menu .dsc-menu-item:hover,

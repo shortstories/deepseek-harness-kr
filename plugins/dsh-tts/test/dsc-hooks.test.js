@@ -228,6 +228,9 @@ test("우클릭 메뉴: 펫 창 메뉴와 같은 항목(소품·옷·체형·숨
   assert.ok(SRC.includes("for (const other of menu.querySelectorAll(\".dsc-menu-row.open\")) if (other !== row) other.classList.remove(\"open\");"), "한 번에 한 서브메뉴만");
   // 체크 표시는 글자 앞 ✓ 로 (OS 메뉴의 radio/checkbox 흉내)
   assert.ok(SRC.includes('button.textContent = (item.checked ? "✓ " : "") + item.label;'), "체크 표시");
+  // 여닫을 때마다 자리를 새로 잰다: 지난번에 밀어 둔 top이 남아 있으면 그 위치를 기준으로 재서 점점 아래로 밀린다
+  assert.ok(SRC.includes('sub.classList.remove("flip");\n        sub.style.top = "";'), "재기 전에 지난 자국을 지운다");
+  assert.ok(SRC.includes('const rise = Math.min(box.bottom - (innerHeight - 8), Math.max(0, box.top - 8));'), "위로 밀되 화면 위로는 넘기지 않는다");
 });
 
 test("dsc.js 는 특정 플러그인/URL 에 의존하지 않는다", () => {

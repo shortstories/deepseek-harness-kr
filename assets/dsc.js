@@ -4510,10 +4510,11 @@
           const sub = row.querySelector(".dsc-submenu");
           if (!sub) return;
           sub.classList.remove("flip");
+          sub.style.top = "";
           const box = sub.getBoundingClientRect();
           if (box.right > innerWidth - 8) sub.classList.add("flip");
-          if (box.bottom > innerHeight - 8) sub.style.top = -(box.bottom - innerHeight + 10) + "px";
-          else sub.style.top = "";
+          const rise = Math.min(box.bottom - (innerHeight - 8), Math.max(0, box.top - 8));
+          if (rise > 0) sub.style.top = `${-(rise + 6)}px`;
         }
         function fillMenu(box, list) {
           for (const item of list) {
