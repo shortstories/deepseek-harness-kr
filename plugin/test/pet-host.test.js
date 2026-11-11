@@ -261,7 +261,8 @@ test('mac pet process gets a unix socket, accepts one connection and cleans up o
   const launches = []
   const spawnImpl = (bin, args, opts) => { const c = new EventEmitter(); c.kill = () => c.emit('exit'); launches.push({ bin, args, opts, c }); return c }
   const exe = '/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness'
-  const pet = createPetManager({ assets: 'A', exe, platform: 'darwin', base: 'B', app: 'P', spawnImpl, prepare: async (e, b, a) => { assert.deepEqual([e, b, a], [exe, 'B', 'P']); return '/pet/bin' } })
+  let avatarSetting = '/models/a'
+  const pet = createPetManager({ assets: 'A', exe, platform: 'darwin', base: 'B', app: 'P', spawnImpl, prepare: async (e, b, a) => { assert.deepEqual([e, b, a], [exe, 'B', 'P']); return '/pet/bin' }, avatarDir: () => avatarSetting })
   const old = { ...process.env }; process.env.ELECTRON_RUN_AS_NODE = '1'; process.env.__CFBundleIdentifier = 'com.deepseek.dsh'
   try { await pet.warm() } finally { process.env = old }
   const [{ bin, args, opts, c }] = launches
@@ -270,18 +271,28 @@ test('mac pet process gets a unix socket, accepts one connection and cleans up o
   assert.ok(args.includes('--dsc-assets=A'))
   assert.deepEqual(opts.stdio, ['ignore', 'pipe', 'pipe']); assert.equal('windowsHide' in opts, false)
   for (const key of ['ELECTRON_RUN_AS_NODE', 'NODE_OPTIONS', '__CFBundleIdentifier']) assert.equal(key in opts.env, false)
-  // 펫이 연결해 ready 를 보내면 hidden, 호스트가 보내는 open 은 한 줄 JSON 으로 도착
+  // 펫이 연결해 ready 를 보내면 hidden, 호스트가 보내는 메시지는 한 줄씩 JSON 으로 도착 (3D 모델 설정이 open보다 먼저)
   const socket = connect(sockPath); await once(socket, 'connect')
   const received = []; socket.setEncoding('utf8'); socket.on('data', (d) => received.push(d))
   socket.write(JSON.stringify({ type: 'auth', secret: opts.env.DSC_PET_SECRET }) + '\n')
   socket.write(JSON.stringify({ type: 'ready' }) + '\n'); await sleep(100)
   assert.equal(pet.status().state, 'hidden')
   await pet.open({ seq: 2, from: { k: 1, x: 1, y: 2 }, to: { k: 1, x: 3, y: 4 } }); await sleep(100)
-  assert.deepEqual(JSON.parse(received.join('').trim()), { type: 'open', from: { k: 1, x: 1, y: 2 }, to: { k: 1, x: 3, y: 4 }, follow: false, seq: 2 })
+  const lines = () => received.join('').trim().split('\n').map((line) => JSON.parse(line))
+  assert.deepEqual(lines(), [{ type: 'avatar', dir: '', outline: 'smooth' }, { type: 'open', from: { k: 1, x: 1, y: 2 }, to: { k: 1, x: 3, y: 4 }, follow: false, seq: 2 }], '창 안이 3D가 아니면 폴더 없이(Live2D)')
   // 따라오기: 커서가 몸을 잡은 자리(grab)도 그대로 전달해야 펫 창에서 잡은 위치가 유지됨
   received.length = 0
   await pet.open({ seq: 3, from: { k: 1, x: 1, y: 2 }, to: { k: 1, x: 1, y: 2 }, follow: true, grab: { x: 136, y: 146 } }); await sleep(100)
-  assert.deepEqual(JSON.parse(received.join('').trim()).grab, { x: 136, y: 146 })
+  assert.deepEqual(lines().map((m) => m.type), ['open'], '3D 설정이 그대로면 다시 보내지 않음')
+  assert.deepEqual(lines()[0].grab, { x: 136, y: 146 })
+  // 창 안이 3D면 지금 폴더 설정을 open보다 먼저 보내고, 폴더 설정이 바뀌면 다음 open 때 다시 보냄
+  received.length = 0
+  await pet.open({ seq: 4, avatar: { enabled: true, outline: 'model' } }); await sleep(100)
+  assert.deepEqual(lines().map((m) => m.type), ['avatar', 'open'])
+  assert.deepEqual(lines()[0], { type: 'avatar', dir: '/models/a', outline: 'model' })
+  received.length = 0; avatarSetting = '/models/b'
+  await pet.open({ seq: 5, avatar: { enabled: true, outline: 'model' } }); await sleep(100)
+  assert.deepEqual(lines()[0], { type: 'avatar', dir: '/models/b', outline: 'model' })
   // 붙은 뒤에는 소켓이 닫혀 다른 프로세스는 연결할 수 없음
   const late = connect(sockPath); await once(late, 'error')
   socket.destroy(); c.emit('exit'); await sleep(50)
@@ -326,9 +337,10 @@ test('펫 창이 숨으면 페이지에 그리기 중지를 알리고, 페이지
 test('숨은 펫 창은 배치 루프와 PIXI 시스템 티커가 프레임마다 깨우지 않고, open 이 오면 다시 돈다', async () => {
   const dsc = readSource(new URL('../../character/index.ts', import.meta.url))
   // 상호작용 매니저의 Ticker.system 구독은 루프가 쉬는 동안만 끄고, 깨울 때 되돌린다 (autoInteract: false 라 쓰지 않음)
-  assert.match(dsc, /const systemTicker = \(on\) => \{ try \{ app\.renderer\.plugins\.interaction\.useSystemTicker = on; \} catch \{\} \};/)
+  // 시스템 티커 구독은 Live2D 렌더러(character/rig-live2d.ts)가 갖고, 창 안 코드는 rig.systemTicker로 씀
+  assert.match(readSource(new URL('../../character/rig-live2d.ts', import.meta.url)), /const systemTicker = \(on\) => \{ try \{ app\.renderer\.plugins\.interaction\.useSystemTicker = on; \} catch \{\} \};/)
   assert.match(dsc, /const wakeRaf = \(\) => \{ if \(rafIdle\) \{ rafIdle = false; systemTicker\(true\); requestAnimationFrame\(raf\); \} \};/)
-  assert.match(dsc, /autoInteract: false/)
+  assert.match(readSource(new URL('../../character/rig-live2d.ts', import.meta.url)), /autoInteract: false/)
   // 숨은 펫(petPower=false)은 루프를 다음 프레임에 이어 가지 않는다
   assert.match(dsc, /if \(PET \? !petPower : link\.open\) \{ rafIdle = true; systemTicker\(false\); return; \}\n\s*requestAnimationFrame\(raf\);/)
   // power on·open 은 루프를 다시 깨운다

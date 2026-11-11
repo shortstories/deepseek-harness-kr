@@ -40,6 +40,7 @@ const PET_EXE = 'dsc-pet.exe'
  * @property {unknown} [to]
  * @property {unknown} [follow]
  * @property {unknown} [grab]
+ * @property {unknown} [avatar] 창 안 캐릭터의 3D 모델 사용 여부·외곽선 ({ enabled, outline })
  */
 
 /**
@@ -264,13 +265,16 @@ const defaultBase = (platform = process.platform) => platform === 'darwin'
  * @param {typeof prepareRuntime} [options.prepare] 펫 런타임 준비 (시험용)
  * @param {number} [options.readyTimeout] 펫 창이 준비됐다고 알릴 때까지 기다리는 시간(ms)
  * @param {number} [options.authTimeout] 펫 프로세스가 비밀값으로 인증할 때까지 기다리는 시간(ms)
+ * @param {() => unknown} [options.avatarDir] 모델 폴더 설정(avatarModelDir)을 지금 값으로 읽기 (펫 창도 창 안과 같은 3D 모델을 그리게 함)
  */
-export function createPetManager({ assets, exe = electronExecutable(), platform = process.platform, base = defaultBase(platform), app = PET_APP, spawnImpl = spawn, prepare = prepareRuntime, readyTimeout = READY_TIMEOUT, authTimeout = 5000 } = {}) {
+export function createPetManager({ assets, exe = electronExecutable(), platform = process.platform, base = defaultBase(platform), app = PET_APP, spawnImpl = spawn, prepare = prepareRuntime, readyTimeout = READY_TIMEOUT, authTimeout = 5000, avatarDir = () => '' } = {}) {
   const supported = supportedOn(platform, exe)
   // seq: 마지막으로 연 회차 (새로 불러온 화면이 이어받음), disposed: 플러그인이 내려감 (시작 도중이면 펫을 띄우지 않음)
   let child = /** @type {PetChild | null} */ (null), server = /** @type {import('node:net').Server | null} */ (null), socket = /** @type {import('node:net').Socket | null} */ (null), starting = /** @type {Promise<void> | null} */ (null), state = 'none', seq = /** @type {number | undefined} */ (undefined), disposed = false, endpoint = /** @type {Awaited<ReturnType<typeof createEndpoint>> | null} */ (null)
   let readyTimer = /** @type {NodeJS.Timeout | null} */ (null)   // 띄운 펫이 ready를 보내지 않으면(시작 도중 멈춤) 끝내고 다음 시도에 맡김
   const events = /** @type {PetMessage[]} */ ([]), outbox = /** @type {PetMessage[]} */ ([])
+  // 3D 모델: 창 안 캐릭터가 쓰는 렌더러(warm·open 본문 avatar = { enabled, outline })와 지금 폴더 설정을 합쳐 펫 프로세스에 보냄 (바뀔 때만)
+  let avatarWanted = /** @type {{ enabled?: unknown, outline?: unknown }} */ ({ enabled: false }), avatarSent = /** @type {string | null} */ (null)
   /** @type {Set<import('node:net').Socket>} */
   const connections = new Set()
   /** 펫 프로세스로 메시지 보내기. 인증 전 시작 중이면 outbox 에 모아 두고, 시작도 안 했으면 버림 @param {PetMessage} message */
@@ -298,7 +302,7 @@ export function createPetManager({ assets, exe = electronExecutable(), platform 
     for (const connection of connections) connection.destroy()
     connections.clear()
     socket?.destroy()
-    child = null; socket = null; starting = null; state = 'none'; outbox.length = 0
+    child = null; socket = null; starting = null; state = 'none'; outbox.length = 0; avatarSent = null
     server?.close(); server = null
     endpoint?.cleanup().catch(() => {}); endpoint = null
   }
@@ -362,15 +366,29 @@ export function createPetManager({ assets, exe = electronExecutable(), platform 
       events.push({ type: 'error', message: 'pet did not become ready', seq, ...exitDetail(null, null, stderrTail()) })
     }, readyTimeout)
   })().catch((error) => { const started = child; reset(); started?.kill(); events.push({ type: 'error', message: error.message }); throw error })
+  /**
+   * 펫 프로세스에 3D 모델 설정 보내기 (바뀌었을 때만, 창 안 캐릭터가 3D가 아니면 폴더 없이 = Live2D)
+   * open보다 먼저 보내서, 바뀌었으면 펫 창이 숨은 채 새로 불러온 뒤 나타나게 함
+   * @param {{ avatar?: unknown } | null | undefined} body warm·open 본문
+   */
+  const syncAvatar = (body) => {
+    if (body?.avatar && typeof body.avatar === 'object') avatarWanted = /** @type {{ enabled?: unknown, outline?: unknown }} */ (body.avatar)
+    const dir = avatarWanted.enabled === true ? String(avatarDir() ?? '').trim() : ''
+    const message = { type: 'avatar', dir, outline: avatarWanted.outline === 'model' ? 'model' : 'smooth' }
+    const key = JSON.stringify(message)
+    if (key === avatarSent) return
+    avatarSent = key; write(message)
+  }
   return {
     /** 지금 상태·회차·쌓인 알림 @param drain true면 쌓인 알림을 비우며 돌려줌, false면 알림 대신 빈 목록 */
     status(drain = true) { return { supported, state, seq, events: drain ? events.splice(0) : [] } },
-    /** 숨긴 채로 펫 프로세스 미리 띄우기 (지원할 때만) */
-    async warm() { if (supported) await start() },
+    /** 숨긴 채로 펫 프로세스 미리 띄우기 (지원할 때만) @param {{ avatar?: unknown } | null} [body] */
+    async warm(body) { if (!supported) return; await start(); syncAvatar(body) },
     /** 펫 창 열기 (필요하면 먼저 시작). 정수 seq 만 이 회차 번호로 기억 @param {OpenBody | null | undefined} body */
     async open(body) {
       if (!supported) return
       await start()
+      syncAvatar(body)
       seq = Number.isInteger(body?.seq) ? /** @type {OpenBody} */ (body).seq : undefined   // 정수 seq 가 있으면 body 도 있음
       write({ type: 'open', from: body?.from, to: body?.to, follow: body?.follow === true, grab: body?.grab, seq })   // grab: 따라오기에서 커서가 몸을 잡은 자리
     },
@@ -414,7 +432,7 @@ export function createPetHandler(pet, rejection = () => 503) {
       if (req.method === 'GET' && path === '/poll') return json(200, pet.status())
       if (req.method !== 'POST') return json(405, { error: 'method' })
       const body = await readJson(req)
-      if (path === '/warm') await pet.warm()
+      if (path === '/warm') await pet.warm(body)
       else if (path === '/open') await pet.open(body)
       else if (path === '/send') pet.send(body.list)
       else if (path === '/hide') pet.hide()

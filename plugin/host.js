@@ -11,6 +11,7 @@ import { createPetHandler, createPetManager, PET_PATH } from './pet-host.js'
 import { registerChatRoutes } from './chat-host.js'
 import { normalizeChat } from './chat-config.js'
 import { applyShortcutIcon } from './app-icon.js'
+import { AVATAR_CACHE_PATH, createAoCacheHandler } from './avatar-cache.js'
 import { OUTFIT_ITEMS, BODY_TYPES } from '../shared/settings.js'
 
 export const name = 'deepseek-harness-kr'
@@ -28,7 +29,7 @@ export const inject = ['webServer', 'connection']
  */
 /**
  * 설정 중 이 파일이 읽는 값 (volatile 참조일 수 있어 readLive로 읽음)
- * @typedef {{ tts?: unknown, chat?: unknown, appIcon?: unknown }} HostConfig
+ * @typedef {{ tts?: unknown, chat?: unknown, appIcon?: unknown, avatarModelDir?: unknown }} HostConfig
  */
 
 // 말풍선 음성(TTS). 설정 화면이 쓰는 값은 모두 volatile이어야 한다(Settings는 volatile 필드만 쓴다).
@@ -83,6 +84,8 @@ export const Config = z.object({
   // 소품·옷·체형: 항목 정의는 shared/settings.js 하나 (펫 창 메뉴·설정 화면·캐릭터와 같은 목록)
   ...Object.fromEntries(OUTFIT_ITEMS.map(({ key }) => [key, z.boolean().default(false).volatile()])),
   bodyType: z.union(BODY_TYPES.map(({ key }) => z.const(key))).default('default').volatile(),
+  // '대사 ex': 켜면 assets/dsc-lines-ex.json의 대사를 덮어쓴다 (기본 꺼짐)
+  extraLines: z.boolean().default(false).volatile(),
   tts: TtsConfig,
   // 캐릭터 대화(모델 연결): 켜면 혼잣말·결과 요약·직접 대화를 모델이 맡는다 (기본은 규칙 기반)
   // 준비하지 않은 필드는 비워 두면 되고, 실제 값 검사는 요청마다 normalizeChat이 맡는다.
@@ -128,20 +131,35 @@ export const Config = z.object({
   canvasToggle: z.boolean().default(false).volatile(),
   // 캔버스 숨김/표시 단축키 (canvasToggle이 켜져 있을 때만 동작, 비우면 없음). 예: "Ctrl+Shift+H"
   canvasToggleKey: z.string().default('Ctrl+Shift+H').volatile(),
+  // 실험: 3D 모델 폴더(절대 경로, avatar.json과 모델 파일). 비우면 기본 Live2D 캐릭터. 모델은 배포하지 않고 사용자 폴더에서만 읽는다
+  avatarModelDir: z.string().default('').volatile(),
+  // 실험: 3D 외곽선 법선. smooth = 같은 위치 법선 평균(기본), model = 모델에 든 외곽선 메시(다듬은 법선·두께)
+  avatarOutline: z.union([z.const('smooth'), z.const('model')]).default('smooth').volatile(),
+  // 실험: 3D 눈썹 움직임 세기(배율, 0~2). 동작 코드의 눈썹 값은 Live2D 기준이라 3D 모델에서는 클 수 있음
+  avatarBrowScale: z.number().min(0).max(2).default(1).volatile(),
+  // 실험: 3D 눈썹이 목표로 부드럽게 따라가는 시간(ms, 0~300). 말할 때 눈썹이 툭 튀지 않게
+  avatarBrowSmooth: z.number().min(0).max(300).default(80).volatile(),
+  // 실험: 3D 앰비언트 오클루전(AO). 모델에 AO 맵이 없으면 정점 AO를 자동으로 굽고 캐시 파일로 남김 (avatar.json ao.enabled가 켜져 있어도 켜짐, 끄고 켜면 바로 반영)
+  avatarAo: z.boolean().default(false).volatile(),
+  // 실험: 3D AO 세기 (0~1). 간접광을 AO만큼 어둡게 하고 그림자 쪽으로 미는 정도, 매 프레임 반영
+  avatarAoStrength: z.number().min(0).max(1).default(0.6).volatile(),
 })
 export const ASSET_PATH = '/deepseek-harness-kr/assets'
 /** 호스트 쪽 진단 상태 조회 경로 (설정 화면이 시작 후 한 번 읽어 콘솔에 남김) */
 export const STATUS_PATH = '/deepseek-harness-kr/status'
+/** 3D 모델 폴더(avatarModelDir) 파일 경로 (인증된 요청만) */
+export const AVATAR_PATH = '/deepseek-harness-kr/avatar'
 const assets = fileURLToPath(new URL('../assets/', import.meta.url))
 /** @type {Record<string, string | undefined>} */
-const types = { '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.moc3': 'application/octet-stream' }
+const types = { '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.moc3': 'application/octet-stream', '.fbx': 'application/octet-stream', '.vrm': 'application/octet-stream', '.glb': 'model/gltf-binary', '.jpg': 'image/jpeg' }
 
 /**
  * 자산 파일 요청 처리기 생성. GET·HEAD만 받고 ETag가 같으면 304
  * @param {string} [root] 자산 폴더 (기본 assets/)
+ * @param {string} [prefix] 요청 경로 앞부분 (기본 ASSET_PATH)
  * @returns {RequestHandler}
  */
-export function createAssetHandler(root = assets) {
+export function createAssetHandler(root = assets, prefix = ASSET_PATH) {
   return async (req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405, { Allow: 'GET, HEAD' }); res.end(); return
@@ -149,8 +167,8 @@ export function createAssetHandler(root = assets) {
     try {
       // 경로 해석 전에 디코딩. 경로 문자열로 벗어나기·심볼릭 링크로 벗어나기 모두 거절로 처리
       const path = decodeURIComponent((req.url || '').split('?')[0])
-      if (!path.startsWith(ASSET_PATH + '/')) { res.writeHead(404); res.end(); return }
-      const suffix = path.slice(ASSET_PATH.length + 1)
+      if (!path.startsWith(prefix + '/')) { res.writeHead(404); res.end(); return }
+      const suffix = path.slice(prefix.length + 1)
       if (!suffix || suffix.includes('\\') || suffix.includes('\0')) { res.writeHead(404); res.end(); return }
       const base = await realpath(root)
       const target = await realpath(resolve(base, suffix))
@@ -204,9 +222,9 @@ export function createStatusHandler(read, rejection) {
 /**
  * 플러그인 시작: 자산·음성·펫 경로 등록, 앱 바로가기 아이콘 동기화
  * @param {HostContext} ctx @param {HostConfig | undefined} config 플러그인 설정 (volatile 참조가 섞임)
- * @param {{ applyIcon?: typeof applyShortcutIcon }} [options] 앱 아이콘 적용 함수 대체 (시험용, DSH는 넘기지 않음)
+ * @param {{ applyIcon?: typeof applyShortcutIcon, avatarCacheDir?: string }} [options] 앱 아이콘 적용 함수·AO 캐시 폴더 대체 (시험용, DSH는 넘기지 않음)
  */
-export function apply(ctx, config, { applyIcon = applyShortcutIcon } = {}) {
+export function apply(ctx, config, { applyIcon = applyShortcutIcon, avatarCacheDir } = {}) {
   ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: ASSET_PATH, handler: createAssetHandler() }), 'deepseek-harness-kr: assets')
   // 말풍선 음성: 설정 화면에서 바꾼 값(volatile)을 요청마다 다시 읽는다. 꺼져 있으면 404.
   registerSpeechRoutes(ctx, () => normalizeTts(readLive(config?.tts)))
@@ -216,9 +234,20 @@ export function apply(ctx, config, { applyIcon = applyShortcutIcon } = {}) {
   const rejection = (req) => { const connection = ctx.connection; return typeof connection?.requestRejection === 'function' ? connection.requestRejection(req) : 503 }
   /** 앱 바로가기 아이콘의 마지막 실패 사유 (성공하거나 해당 없으면 null) */
   let appIconProblem = /** @type {{ reason: string, message?: string } | null} */ (null)
+  // 3D 모델 폴더: 설정값(volatile)을 요청마다 읽고, 비어 있으면 404. 사용자 폴더라 인증된 요청만 받는다
+  ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: AVATAR_PATH, handler: async (req, res) => {
+    const denied = rejection(req)
+    if (denied !== undefined) { res.writeHead(denied); res.end(); return }
+    const dir = readLive(config?.avatarModelDir)
+    if (typeof dir !== 'string' || !dir.trim()) { res.writeHead(404); res.end(); return }
+    await createAssetHandler(dir.trim(), AVATAR_PATH)(req, res)
+  } }), 'deepseek-harness-kr: avatar')
+  // 3D 모델 AO 굽기 캐시: 키는 모델 폴더 안 실제 파일·크기·수정 시각·굽기 설정으로 호스트가 정함 (avatar-cache.js)
+  ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: AVATAR_CACHE_PATH,
+    handler: createAoCacheHandler({ modelDir: () => readLive(config?.avatarModelDir), rejection, ...(avatarCacheDir ? { cacheDir: avatarCacheDir } : {}) }) }), 'deepseek-harness-kr: avatar cache')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: STATUS_PATH, handler: createStatusHandler(() => ({ appIcon: appIconProblem }), rejection) }), 'deepseek-harness-kr: status')
   ctx.effect(() => {
-    const pet = createPetManager({ assets })
+    const pet = createPetManager({ assets, avatarDir: () => readLive(config?.avatarModelDir) })
     const unregister = ctx.webServer.register({ kind: 'prefix', path: PET_PATH, handler: createPetHandler(pet, rejection) })
     return () => { unregister?.(); pet.dispose() }
   }, 'deepseek-harness-kr: pet')

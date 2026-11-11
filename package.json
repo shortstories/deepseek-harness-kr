@@ -1,9 +1,16 @@
 {
   "name": "deepseek-harness-kr",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "DeepSeek쟝 Plugin for DSH with KR — 한국어 UI, 파스텔 테마 및 Live2D 캐릭터",
   "type": "module",
   "license": "MIT",
+  "contributors": [
+    { "name": "Claude", "url": "https://claude.ai" },
+    { "name": "DeepSeek", "url": "https://www.deepseek.com" },
+    { "name": "TraceofLight", "url": "https://github.com/TraceofLight" },
+    { "name": "Opus", "url": "https://claude.ai" },
+    { "name": "Gemma 4 26B A4B heretic" }
+  ],
   "main": "./plugin/host.js",
   "exports": {
     ".": "./plugin/host.js",
@@ -20,7 +27,9 @@
     "plugin/chat-config.js",
     "plugin/chat-host.js",
     "plugin/pet-host.js",
+    "plugin/avatar-cache.js",
     "shared/settings.js",
+    "shared/ao-cache.js",
     "lib/client.js",
     "assets/",
     "pet/",
@@ -59,13 +68,16 @@
   },
   "devDependencies": {
     "@electron/asar": "^3.2.17",
+    "@pixiv/three-vrm": "^3.5.5",
     "@types/node": "24.10.1",
     "@types/react": "18.3.26",
+    "@types/three": "^0.187.0",
     "acorn": "^8.15.0",
     "esbuild": "0.25.11",
     "jsdom": "^27.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "three": "^0.187.0",
     "typescript": "5.9.3"
   },
   "publishConfig": {

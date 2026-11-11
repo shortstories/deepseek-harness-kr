@@ -20,6 +20,8 @@ declare global {
     __dscSessionId?: string;
     /** 옛 WebKit의 AudioContext */
     webkitAudioContext?: typeof AudioContext;
+    /** 3D 렌더러 묶음(assets/vendor/rig-three.js)이 넣는 생성 함수 */
+    DscRigThree?: { createThreeRig: typeof import("./rig-three.ts").createThreeRig };
   }
   /** Chromium 확장: 여러 모니터에서 화면 왼쪽 위 */
   interface Screen { availLeft?: number; availTop?: number }

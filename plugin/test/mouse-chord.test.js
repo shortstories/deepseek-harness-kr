@@ -22,7 +22,9 @@ function harness() {
     rightPress: null, chord: { at: null, button: null, valid: false },
     drag: { pending: null, on: false, x: 0, y: 0, samples: [] },
     shown: { k: 1, x: 0, y: 0 },
-    strokeFrom: null, chestFrom: null, chestDragging: false, chestTarget: 0, chestShiftTarget: 0, chestLongTimer: 0,
+    strokeFrom: null, chestFrom: null, chestPulling: false,
+    // 가슴 끌기 반응은 행동(character/behaviors)이 맡는다: 보낸 이벤트만 기록
+    EVENTS: { chestPull: 'touch.chest.pull' }, behaviors: { dispatch: (key, event) => { context.dispatched.push([key, event.phase]); return true } }, dispatched: [],
     swallowClick: false,
     clock: 1000, hit: true, prevented: 0, stopped: 0,
     walking: () => false, intro: { phase: 'done' }, fleeX: 0, link: { opening: 0 },
@@ -39,7 +41,7 @@ function harness() {
     },
   }
   const script = `let rightPress = null, mouseButtons = 0;\n${chordBlock}\n${mouseBlock}\n({
-    state: () => ({ rightPress, mouseButtons, chord, drag, strokeFrom, chestFrom, chestDragging, swallowClick }),
+    state: () => ({ rightPress, mouseButtons, chord, drag, strokeFrom, chestFrom, chestPulling, swallowClick }),
     seed: (value) => { rightPress = value.rightPress ?? rightPress; mouseButtons = value.mouseButtons ?? mouseButtons; chord = value.chord ?? chord; drag.pending = value.pending ?? drag.pending; strokeFrom = value.strokeFrom ?? strokeFrom },
     moved: (event, now) => chordButtonsMoved(event, now),
     start: (event) => rightStart(event),

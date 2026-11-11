@@ -12,14 +12,28 @@ import { JSDOM, VirtualConsole } from 'jsdom'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const BASE = 'http://127.0.0.1/deepseek-harness-kr/assets/'
+// 대사 파일(assets/dsc-lines.json)은 이 저장소 것을 그대로 내준다 (대사 파일이 없던 기준 소스는 요청하지 않음)
+const LINES_JSON = readFile(join(here, '../../../assets/dsc-lines.json'), 'utf8').then(JSON.parse)
 
 // 저장소 root의 character/ 소스를 브라우저용 IIFE로 묶는다 (index.js·index.ts 모두)
-export async function bundleCharacter(root) {
+// behaviors를 주면 Live2D 프로필의 행동 목록(model-profile.ts BEHAVIORS)을 그 목록으로 바꿔 묶는다 (행동이 없는 모델 흉내)
+export async function bundleCharacter(root, { behaviors } = {}) {
   const esbuild = await import('esbuild')
   const entry = `import { createCharacter } from ${JSON.stringify(join(root, 'character/index').replaceAll('\\', '/'))}
 import { createLifetime } from ${JSON.stringify(join(root, 'character/lifetime').replaceAll('\\', '/'))}
 globalThis.__traceCharacter = createCharacter({ base: ${JSON.stringify(BASE)}, life: createLifetime(), prefs: globalThis.__tracePrefs || {}, pet: globalThis.__tracePet || null })`
-  const out = await esbuild.build({ stdin: { contents: entry, resolveDir: root, loader: 'js' }, bundle: true, format: 'iife', platform: 'browser', target: 'es2022', charset: 'utf8', write: false, logLevel: 'silent' })
+  const plugins = behaviors ? [{
+    name: 'trace-behaviors',
+    setup(build) {
+      build.onLoad({ filter: /model-profile\.ts$/ }, async (args) => {
+        const text = await readFile(args.path, 'utf8')
+        const replaced = text.replace(/export const BEHAVIORS: readonly string\[\] = \[[^\]]*\];/, `export const BEHAVIORS: readonly string[] = ${JSON.stringify(behaviors)};`)
+        if (replaced === text) throw new Error('model-profile.ts BEHAVIORS를 찾지 못함')
+        return { contents: replaced, loader: 'ts' }
+      })
+    },
+  }] : []
+  const out = await esbuild.build({ stdin: { contents: entry, resolveDir: root, loader: 'js' }, bundle: true, format: 'iife', platform: 'browser', target: 'es2022', charset: 'utf8', write: false, logLevel: 'silent', plugins })
   return out.outputFiles[0].text
 }
 
@@ -181,12 +195,19 @@ function installLayout(win, size) {
   Object.defineProperty(win, 'innerWidth', { configurable: true, get: () => size.w })
   Object.defineProperty(win, 'innerHeight', { configurable: true, get: () => size.h })
   win.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} })
+  // JSDOM에는 Web Animations가 없다: 연출 요소(냄비 등)의 animate()는 길이만큼 지난 뒤 onfinish를 부르는 가짜로
+  proto.animate = function (_keyframes, options) {
+    const anim = { onfinish: null, cancel() { win.clearTimeout(timer) } }
+    const timer = win.setTimeout(() => anim.onfinish?.(), typeof options === 'number' ? options : options?.duration ?? 0)
+    return anim
+  }
   win.document.elementFromPoint = () => null   // 캐릭터 위에 버튼·입력창이 없음
   win.devicePixelRatio = 1
 }
 
 // 정해 둔 입력(인트로 클릭·마우스·말하기·작업 상태·소품 설정·창 크기·절전)을 프레임 순서대로 넣고 기록을 돌려준다
-export async function runTrace(code, { pet = false } = {}) {
+// fallbackRegion: 시나리오가 찾는 부위가 없으면(예: 가슴 행동이 없어 가슴이 몸으로 판정) 대신 누를 부위
+export async function runTrace(code, { pet = false, fallbackRegion = null } = {}) {
   const virtualConsole = new VirtualConsole()   // JSDOM의 "구현 안 됨" 경고(캔버스 등)는 버린다
   if (process.env.TRACE_CONSOLE) virtualConsole.on('warn', (...a) => console.error('[trace warn]', ...a))   // 캐릭터 코드의 오류 경고(배치 실패 등)를 보려면 TRACE_CONSOLE=1
   const dom = new JSDOM('<!doctype html><html><head></head><body><div class="x_root"><div class="x_card dsc-composer"><div class="x_input"></div></div></div></body></html>', { url: 'http://127.0.0.1/', runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole })   // 보이는 화면(document.hidden=false). rAF는 아래에서 가짜로 바꾼다
@@ -197,7 +218,8 @@ export async function runTrace(code, { pet = false } = {}) {
   installFakeModel(win, clock, sink)
   installLayout(win, size)
   win.Math.random = seeded(20261108)
-  win.fetch = async (url) => String(url).includes('/model/exp/') ? { ok: true, json: async () => ({ Parameters: [{ Id: 'ParamCheek', Value: 1, Blend: 'Add' }] }) } : { ok: false, json: async () => null }
+  win.fetch = async (url) => String(url).includes('/model/exp/') ? { ok: true, json: async () => ({ Parameters: [{ Id: 'ParamCheek', Value: 1, Blend: 'Add' }] }) }
+    : String(url).endsWith('/dsc-lines.json') ? { ok: true, json: () => LINES_JSON } : { ok: false, json: async () => null }
   Object.defineProperty(doc, 'currentScript', { configurable: true, get: () => ({ src: BASE + 'dsc.js' }) })
   // 펫 모드: 펫 창 preload가 넣어 주는 통로를 가짜로 두고, 화면(모니터)·창 위치를 정해 둔다
   const petBus = { handler: null, sent: [] }
@@ -234,6 +256,7 @@ export async function runTrace(code, { pet = false } = {}) {
       res: r6(win.__traceRes?.() ?? null),
       renders: sink.renders, resizes: sink.resizes,
       params: sink.params,
+      overlays: doc.body.children.length,   // 냄비·충격 그림처럼 잠깐 붙는 연출 요소 수
       pet: pet ? roundDeep(petBus.sent.splice(0)) : undefined,
     })
     sink.params = null
@@ -245,6 +268,7 @@ export async function runTrace(code, { pet = false } = {}) {
   const spot = (name) => {
     const s = doc.getElementById('dsc-stage').getBoundingClientRect()
     for (let y = s.top + 2; y < s.bottom; y += 4) for (let x = s.left + 2; x < s.right; x += 4) if (win.__dsc.regionAt(x, y) === name) return [x, y]
+    if (fallbackRegion && name !== fallbackRegion) return spot(fallbackRegion)
     throw new Error('부위를 찾지 못함: ' + name)
   }
   const press = (type, x, y, o = {}) => doc.getElementById('dsc-stage').dispatchEvent(new win.PointerEvent(type, {
@@ -271,6 +295,19 @@ export async function runTrace(code, { pet = false } = {}) {
     const body = spot('lower')
     for (let i = 0; i < 6; i++) { doc.getElementById('dsc-stage').dispatchEvent(new win.WheelEvent('wheel', { clientX: body[0], clientY: body[1], deltaY: -120, bubbles: true, cancelable: true })); await run(3) }
     await run(150)                                                                   // 휠로 키우기
+  }
+  // 캐릭터 고유 행동(냄비·세숫대야로 막기·삐짐·가슴 연타·아랫배 연타와 도망)을 끝까지 진행
+  const tap = async (name, after) => { await gesture(spot(name), 0, 0, { steps: 0 }); await run(after) }
+  const behaviorScenarios = async () => {
+    await gesture(spot('head'), 0, 80, { steps: 2, frames: 1 }); await run(300)     // 빠르게 쓸어내리기 (냄비)
+    await gesture(spot('head'), 0, 70, { steps: 10, frames: 4 }); await run(60)      // 세숫대야를 쓴 채로
+    await gesture(spot('head'), 0, 80, { steps: 2, frames: 1 }); await run(120)     // 냄비를 막아 냄
+    for (let i = 0; i < 3; i++) await tap('head', 30)                                 // 머리 3연타 → 삐짐
+    await run(1200)                                                                   // 삐짐 15초 + 풀리며 한마디
+    for (let i = 0; i < 5; i++) await tap('chest', 20)                                // 가슴 연타 → 가리기·떨림·진정
+    await run(420)
+    for (let i = 0; i < 5; i++) await tap('lower', 15)                                // 아랫배 연타 → 도망 후 복귀
+    await run(800)
   }
   // 펫 창 쪽: 펫 프로세스(pet/main.cjs)와 창 안 캐릭터가 보내는 메시지를 순서대로 넣는다
   const emit = (m) => petBus.handler(m)
@@ -311,6 +348,7 @@ export async function runTrace(code, { pet = false } = {}) {
   size.w = 1200; size.h = 700; win.dispatchEvent(new win.Event('resize'))
   await run(120)                                   // 창 크기 변경
   await touchScenarios()
+  await behaviorScenarios()
   await run(780, 100)                              // 입력 없이 78초 → 절전으로 나감
   mouse(600, 300); pointer('pointerdown', 600, 300)
   await run(240)                                   // 깨어나 돌아옴

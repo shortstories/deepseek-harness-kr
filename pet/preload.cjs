@@ -15,4 +15,6 @@ contextBridge.exposeInMainWorld('dscPet', {
   press: (on) => send({ type: 'press', on: !!on }),
   /** 우클릭 메뉴 띄우기 */
   menu: () => send({ type: 'menu' }),
+  /** 페이지 시작 설정 (3D 모델 여부·외곽선, 호스트 설정을 메인 프로세스가 전달) */
+  config: () => ipcRenderer.invoke('dsc-config'),
 })

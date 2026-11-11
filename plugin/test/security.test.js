@@ -5,8 +5,12 @@ import { connect } from 'node:net'
 import { createSpeakHandler, createStateHandler } from '../../plugins/dsh-tts/src/host.js'
 import { registerSpeechRoutes } from '../../plugins/dsh-tts/src/index.js'
 import { normalize } from '../../plugins/dsh-tts/src/config.js'
-import { apply, ASSET_PATH, Config, STATUS_PATH } from '../host.js'
+import { apply, ASSET_PATH, AVATAR_PATH, Config, readLive, STATUS_PATH } from '../host.js'
+import { AVATAR_CACHE_PATH } from '../avatar-cache.js'
 import { CHAT_ROUTE, CHAT_STATE_ROUTE } from '../chat-host.js'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createPetManager, PET_PATH } from '../pet-host.js'
 
 const response = () => ({ writeHead(code) { this.status = code }, end() { this.ended = true } })
@@ -45,9 +49,40 @@ test('invalid TTS initialization and partial registration preserve assets and pe
       routes.set(route.path, route.handler); return () => routes.delete(route.path)
     } } }
     assert.doesNotThrow(() => apply(ctx, { tts: { enabled: true, openai: { timeoutMs: partial ? 30000 : 601000 } } }, { applyIcon: async () => ({}) }))
-    assert.deepEqual([...routes.keys()].sort(), [ASSET_PATH, STATUS_PATH, PET_PATH, CHAT_ROUTE, CHAT_STATE_ROUTE].sort())
+    assert.deepEqual([...routes.keys()].sort(), [ASSET_PATH, AVATAR_PATH, AVATAR_CACHE_PATH, STATUS_PATH, PET_PATH, CHAT_ROUTE, CHAT_STATE_ROUTE].sort())
     disposers.reverse().forEach((fn) => fn?.()); assert.equal(routes.size, 0)
   }
+})
+
+test('3D model folder route requires Harness auth, follows the live setting and stays inside the folder', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-kr-avatar-'))
+  try {
+    await mkdir(join(root, 'model'))
+    await writeFile(join(root, 'model', 'avatar.json'), '{"model":"m.fbx"}')
+    await writeFile(join(root, 'secret.txt'), 'x')
+    let dir = '', denied = /** @type {number | undefined} */ (401)
+    const routes = new Map()
+    apply({ connection: { requestRejection: () => denied }, effect(fn) { fn() }, webServer: { register(route) { routes.set(route.path, route.handler); return () => {} } } },
+      { avatarModelDir: { get: () => dir } }, { applyIcon: async () => ({}) })
+    const handler = routes.get(AVATAR_PATH)
+    /** 경로 하나 요청해 상태 코드·본문 받기 */
+    const get = async (path) => {
+      const chunks = []
+      const res = new (await import('node:stream')).PassThrough()
+      Object.assign(res, { headersSent: false, writeHead(code) { this.status = code; this.headersSent = true } })
+      res.on('data', (c) => chunks.push(c))
+      await handler({ method: 'GET', url: AVATAR_PATH + path, headers: {} }, res)
+      return { status: res.status, body: Buffer.concat(chunks).toString() }
+    }
+    dir = join(root, 'model')
+    assert.equal((await get('/avatar.json')).status, 401, '인증 전에는 폴더를 읽지 않음')
+    denied = undefined
+    assert.equal((await get('/avatar.json')).body, '{"model":"m.fbx"}')
+    assert.equal((await get('/%2e%2e%2fsecret.txt')).status, 404, '폴더 밖은 거절')
+    dir = ''
+    assert.equal((await get('/avatar.json')).status, 404, '설정이 비면 없음')
+    assert.equal(readLive(Config({})).avatarModelDir, '')
+  } finally { await rm(root, { recursive: true, force: true }) }
 })
 
 test('TTS schema bounds match normalization', () => {
@@ -81,13 +116,13 @@ test('IPC rejects impostors, times out, bounds lines, authenticates before deliv
     const auth = JSON.stringify({ type: 'auth', secret: launch.opts.env.DSC_PET_SECRET }) + '\n'
     s.write(auth.slice(0, 20)); await delay(10); assert.equal(received, '')
     s.write(auth.slice(20) + JSON.stringify({ type: 'ready' }) + '\n')
-    for (let i = 0; i < 30 && !received; i++) await delay(10)
-    assert.equal(JSON.parse(received.trim()).type, 'open'); assert.equal(pet.status().state, 'hidden')
+    for (let i = 0; i < 30 && !received.includes('"open"'); i++) await delay(10)
+    assert.deepEqual(received.trim().split('\n').map((line) => JSON.parse(line).type), ['avatar', 'open']); assert.equal(pet.status().state, 'hidden')
     const closed = once(s, 'close'); launch.child.emit('exit'); await closed
     assert.equal(pet.status().state, 'none')
     await pet.warm()
     const nextPath = launch.args.find((a) => a.startsWith('--dsc-pipe=')).slice(11)
-    const next = connect(nextPath); sockets.push(next); next.on('error', () => {}); await once(next, 'connect')
+    const next = connect(nextPath); sockets.push(next); next.on('error', () => {}); next.resume(); await once(next, 'connect')   // 인증 뒤 오는 3D 모델 설정은 읽어 버림 (안 읽으면 close가 오지 않음)
     next.write(JSON.stringify({ type: 'auth', secret: launch.opts.env.DSC_PET_SECRET }) + '\n')
     await delay(10)
     const ended = new Promise((r) => next.once('close', r)); next.write('x'.repeat(1024 * 1024 + 1)); await ended

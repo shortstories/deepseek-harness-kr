@@ -40,6 +40,15 @@ const client = await esbuild.build({
   footer: { js: 'return module.exports;\n} });' },
 })
 
+// 3D 렌더러(three.js·FBXLoader·툰 재질): 3D 모델을 켰을 때만 script 태그로 불러오는 따로 묶음
+const rigThree = await esbuild.build({
+  ...common,
+  entryPoints: [join(root, 'character/rig-three-entry.ts')],
+  format: 'iife',
+  minify: true,
+  banner: { js: GENERATED },
+})
+
 const petSettings = await esbuild.build({
   ...common,
   entryPoints: [join(root, 'shared/settings.js')],
@@ -50,6 +59,7 @@ const petSettings = await esbuild.build({
 
 await writeFile(join(root, 'assets/dsc.js'), character.outputFiles[0].text)
 await writeFile(join(root, 'pet/settings.cjs'), petSettings.outputFiles[0].text)
+await writeFile(join(root, 'assets/vendor/rig-three.js'), rigThree.outputFiles[0].text)
 await mkdir(join(root, 'lib'), { recursive: true })
 await writeFile(join(root, 'lib/client.js'), client.outputFiles[0].text)
 await writeFile(join(root, 'cordis.patch.yml'), `- insert:\n    - id: deepseek-harness-kr\n      name: ${JSON.stringify(packageName)}\n`)

@@ -10,13 +10,15 @@ import { PARTS } from '../../character/model-profile.ts'
 // dsc.js의 순수 계산/상태 조각을 그대로 실행해 확인한다. DOM·캔버스 없이 돌 수 있게
 // 필요한 값만 vm 컨텍스트에 넣고, 실제 소스 구간(문자열 경계)을 잘라 쓴다.
 const source = readSource(new URL('../../character/index.ts', import.meta.url))
+// Live2D 렌더러(모델 불러오기·귀·해상도)는 character/rig-live2d.ts로 옮겨 감
+const rigSource = readSource(new URL('../../character/rig-live2d.ts', import.meta.url))
 
-const sliceBetween = (startText, endText) => {
-  const start = source.indexOf(startText)
-  const end = source.indexOf(endText, start)
+const sliceBetween = (startText, endText, from = source) => {
+  const start = from.indexOf(startText)
+  const end = from.indexOf(endText, start)
   assert.ok(start >= 0, `소스에서 시작 지점을 찾지 못했습니다: ${startText}`)
   assert.ok(end > start, `소스에서 끝 지점을 찾지 못했습니다: ${endText}`)
-  return source.slice(start, end)
+  return from.slice(start, end)
 }
 const runScript = (script, context, expose) => vm.runInContext(`${script}\n${expose}`, vm.createContext(context))
 
@@ -165,7 +167,7 @@ test('모바일 숨김 설정에서는 새 숨김에도 칩을 만들지 않는�
 test('그리기 여부는 바뀔 때만 반영하고, 다시 켜면 멈춘 시간을 건너뛰고 쉬던 배치 루프를 깨운다', () => {
   const slice = sliceBetween('let renderOn = true;', 'const place = () =>')
   const ticker = { lastTime: 5, update() {} }
-  const context = { app: { ticker }, wakes: 0, performance: { now: () => 1000 } }
+  const context = { rig: { resetClock: () => { ticker.lastTime = 1000 } }, wakes: 0, performance: { now: () => 1000 } }
   const { setRender, rendering } = runScript(`let wakes = 0; const wakeRaf = () => { wakes++ };\n${slice}`, context,
     '({ setRender, rendering: () => renderOn, wakes: () => wakes })')
   assert.equal(rendering(), true, '창이 보이기 전에 첫 그리기를 끝내 두도록 처음엔 켜져 있다')
@@ -184,7 +186,7 @@ test('한 프레임 안에서 배치가 먼저 돌고 그 다음에 모델 갱�
   const calls = []
   const context = {
     PET: false, petPower: false, hidden: false, SLEEP: { state: 'active' }, link: { open: false },
-    app: { ticker: { lastTime: 0, update: (time) => calls.push(`update@${time}`) } },
+    rig: { resetClock() {}, tick: (time) => calls.push(`update@${time}`) },
     console,
     performance: { now: () => 0 },
     place: () => calls.push('place'),
@@ -220,7 +222,8 @@ test('한 프레임 안에서 배치가 먼저 돌고 그 다음에 모델 갱�
 })
 
 test('렌더 해상도는 실제로 바뀔 때만 버퍼를 다시 만든다', () => {
-  const slice = sliceBetween('const setRes = ', '\n')
+  const body = sliceBetween('setResolution(k) { ', ' },\n', rigSource).slice('setResolution(k) { '.length)
+  const slice = `const setRes = (k) => { ${body} }`
   const calls = []
   const app = { renderer: { resolution: 3, resize: (w, h) => calls.push(`resize ${w}x${h}@${app.renderer.resolution}`) } }
   const setRes = runScript(slice, { app, DPR: 3, W: 300, H: 300 }, 'setRes')
@@ -238,7 +241,7 @@ test('렌더 해상도는 실제로 바뀔 때만 버퍼를 다시 만든다', (
 // 캔버스를 숨긴 동안의 펫 창 단축키는 plugin/test/pet-link.test.js에서 연결 모듈을 직접 실행해 확인한다
 
 test('동물귀 파트 lookup: Part159 인덱스를 찾고, 없으면 -1로 안전하게 넘긴다', () => {
-  const slice = sliceBetween('const EAR_PART_ID = PARTS.animalEars;', 'let basinUntil = 0, basinWeight = 0;')
+  const slice = sliceBetween('const EAR_PART_ID = PARTS.animalEars;', '\n  // ---------- 터치용 메시 판정', rigSource)
   const cm = {
     parts: { ids: ['Part81', 'Part156', 'Part159'] },
     drawables: { count: 1, parentPartIndices: [2], opacities: [1], dynamicFlags: [1] },
@@ -256,7 +259,7 @@ test('동물귀 파트 lookup: Part159 인덱스를 찾고, 없으면 -1로 안�
 })
 
 test('귀 파트 opacity만 바꾸고 다른 파트·기하(model.x/scale)는 건드리지 않는다', () => {
-  const slice = sliceBetween('const EAR_PART_ID = PARTS.animalEars;', 'let basinUntil = 0, basinWeight = 0;')
+  const slice = sliceBetween('const EAR_PART_ID = PARTS.animalEars;', '\n  // ---------- 터치용 메시 판정', rigSource)
   const cm = { parts: { ids: ['Part159'], opacities: new Float32Array([1]) }, drawables: { count: 0, parentPartIndices: [], opacities: [], dynamicFlags: [] } }
   const model = { x: 12.5, y: -3, scale: { x: 0.42, y: 0.42 } }
   const { applyEarOpacity, earOpacityValue } = runScript(slice, { cubismModel: cm, prefs: {}, PARTS }, '({ applyEarOpacity, earOpacityValue })')
@@ -276,7 +279,7 @@ test('귀 파트 opacity만 바꾸고 다른 파트·기하(model.x/scale)는 �
 })
 
 test('귀 숨김은 부드럽게 0..1 사이로 보간되고, 끄면 원래대로 돌아온다', () => {
-  const slice = sliceBetween('const EAR_PART_ID = PARTS.animalEars;', 'let basinUntil = 0, basinWeight = 0;')
+  const slice = sliceBetween('const EAR_PART_ID = PARTS.animalEars;', '\n  // ---------- 터치용 메시 판정', rigSource)
   const cm = { parts: { ids: ['Part159'] }, drawables: { count: 0, parentPartIndices: [], opacities: [], dynamicFlags: [] } }
   const { earOpacityStep, earOpacityValue, setEarW, getEarW } = runScript(slice, { cubismModel: cm, prefs: {}, PARTS }, '({ earOpacityStep, earOpacityValue, setEarW: (v) => { earWeight = v }, getEarW: () => earWeight })')
   let w = 0
@@ -296,7 +299,7 @@ test('귀 숨김은 부드럽게 0..1 사이로 보간되고, 끄면 원래대�
 })
 
 test('귀 터치 판정: earHide 감쇠 전 가시성을 유지하되, 다른 원인으로 숨은 귀는 되살리지 않는다', () => {
-  const slice = sliceBetween('const EAR_PART_ID = PARTS.animalEars;', 'let basinUntil = 0, basinWeight = 0;')
+  const slice = sliceBetween('const EAR_PART_ID = PARTS.animalEars;', '\n  // ---------- 터치용 메시 판정', rigSource)
   const make = (opacities, flags) => {
     const cm = {
       parts: { ids: ['Part159'] },
@@ -433,9 +436,7 @@ function runChipContext() {
       body: { append() {} },
       documentElement: { classList: { remove() {} } },
     },
-    app: {
-      ticker: { lastTime: -1, update() {} },
-    },
+    rig: { resetClock() {}, tick() {} },
     SLEEP: { state: 'active', lastActive: 0 },
     drag: { pending: null, on: false },
     link: { open: false, follow: null, opening: 0 },

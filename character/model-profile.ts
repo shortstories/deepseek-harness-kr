@@ -94,6 +94,10 @@ export const EXPRESSION_FILES: Record<string, string> = {
 /** 눈 그림 자체를 바꾸는 표정 (서로 겹치지 않게 하나만 켜고, 바뀌는 순간 깜빡여 감춤) */
 export const EYE_SWAP_EXPRESSIONS: readonly string[] = ["heart", "squint", "smug", "dizzy"];
 
+/** 이 모델이 쓰는 캐릭터 고유 행동 목록 (character/behaviors, 순서 의미 없음) */
+export const BEHAVIORS: readonly string[] = ["deepseek-chan.pot", "deepseek-chan.basin", "deepseek-chan.sulk", "deepseek-chan.chest",
+  "deepseek-chan.lower", "deepseek-chan.outfit-lines"];
+
 /** 모델 형상 비율 (모두 보이는 그림 영역 대비 비율, 실측) */
 export const GEOMETRY = {
   bustCut: 0.47,          // 상반신 잘림선(허리): 전신 높이 중 위에서부터의 비율 (창 안은 이 위만 보임)

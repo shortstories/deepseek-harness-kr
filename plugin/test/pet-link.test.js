@@ -182,10 +182,21 @@ test('단축키: 캔버스를 숨긴 동안은 아무것도 하지 않고, 떠 �
   assert.equal(h.link.opening, 1000)
   assert.equal(h.link.petState, 'starting')
 
+  // 떠 있으면 창 안 캐릭터가 먼저 나타나고(leave), 그 다음 프레임에 펫 창을 숨긴다 (먼저 숨기면 사이에 아무것도 안 보여 깜빡임)
   h.link.open = true
+  const before = h.posts.length
   h.link.toggle(); await flush()
+  assert.equal(h.link.open, false)
+  assert.deepEqual(h.calls.slice(-1), ['leave'])
+  assert.equal(h.posts.length, before, '창 안이 그리기 전에는 숨기지 않음')
+  h.frames.at(-1)(); await flush()
   assert.deepEqual(h.posts.at(-1), ['hide', {}])
   assert.equal(h.link.opening, 0)
+  // 끄는 도중 따라오던 펫 창은 바로 숨김 (창 안에서 이어 끔)
+  h.link.follow = { shown: true }
+  h.link.toggle(); await flush()
+  assert.deepEqual(h.posts.at(-1), ['hide', {}])
+  h.link.follow = null
 
   h.link.open = false; h.link.petState = 'shown'
   h.link.toggle()
@@ -221,4 +232,39 @@ test('진단: 오류·비정상 종료·펫 창 기록과 POST 실패를 회차�
     '[deepseek-chan-plugin-for-dsh] 펫 요청 실패 (open): HTTP 500 boom',
     '[deepseek-chan-plugin-for-dsh] 펫 요청 오류 (send): Failed to fetch',
   ])
+})
+test('3D 모델: warm·open에 창 안 렌더러(사용 여부·외곽선)를 싣고, 조절값은 바뀔 때 펫 창에 보낸다', async () => {
+  const tuning = { browScale: 1, browSmooth: 0.08 }
+  const h = harness({ avatar: () => ({ enabled: true, outline: 'model' }), dockState: () => ({ dock: { k: 1, x: 0, y: 0 }, outfit: {}, avatar: tuning }) })
+  await h.link.post('warm'); await h.link.post('open', { seq: 1 })
+  assert.deepEqual(h.posts.map(([path, body]) => [path, body.avatar]), [['warm', { enabled: true, outline: 'model' }], ['open', { enabled: true, outline: 'model' }]])
+  assert.equal(h.posts[1][1].seq, 1, '원래 본문은 그대로')
+  await h.link.post('hide')
+  assert.equal(h.posts.at(-1)[1].avatar, undefined, 'warm·open 말고는 싣지 않음')
+  h.link.start()
+  const tick = h.intervals.find(([, ms]) => ms === 150)[0]
+  h.link.open = true
+  tick(); await flush()
+  assert.deepEqual(h.posts.at(-1)[1].list.find(([name]) => name === 'avatar'), ['avatar', [tuning]])
+  tuning.browScale = 1.5
+  tick(); await flush()
+  assert.deepEqual(h.posts.at(-1)[1].list.find(([name]) => name === 'avatar'), ['avatar', [{ browScale: 1.5, browSmooth: 0.08 }]])
+})
+
+test('창 안으로 돌아온 뒤 숨기기 응답이 아직 shown이어도 숨은 것으로 보고, 다음 단축키는 펫 창을 새로 연다', async () => {
+  const h = harness({ fetch: undefined })
+  const link = createPetLink({
+    url: '/pet/',
+    fetch: async (url, init) => { const path = url.slice('/pet/'.length); h.posts.push([path, init?.body ? JSON.parse(init.body) : {}]); return { ok: true, json: async () => ({ state: path === 'hide' ? 'shown' : path === 'open' ? 'starting' : 'hidden', supported: true, events: [] }) } },
+    setTimeout: () => 0, setInterval: () => 0, requestAnimationFrame: (fn) => { h.frames.push(fn); return 1 }, now: () => 1000,
+    onUse() {}, onEnter() {}, onLeave() {}, onConfig() {}, snapshot: () => [], dragMessages: () => [], dockState: () => ({ dock: null, outfit: {} }),
+    dragKey: () => 'Alt', voice: () => null, idle: () => true, hidden: () => false, openPose: () => ({ k: 1, x: 0, y: 0 }),
+  })
+  link.open = true
+  link.toggle()                     // 돌아오기: 창 안이 먼저 그리고
+  h.frames.at(-1)(); await flush()   // 그 프레임에 숨기기
+  assert.equal(link.petState, 'hidden')
+  link.toggle(); await flush()       // 다시 내보내기: 이어받기(enter)가 아니라 새로 열기
+  assert.equal(link.open, false)
+  assert.equal(h.posts.at(-1)[0], 'open')
 })

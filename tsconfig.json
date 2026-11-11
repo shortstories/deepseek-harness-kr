@@ -22,7 +22,7 @@
   // 엄격하게 검사하는 캐릭터 소스와, Node가 직접 실행하는 JS(// @ts-check, JSDoc 타입)
   "include": [
     "character/layout.ts", "character/chord.ts", "character/motion.ts", "character/harness-signals.ts",
-    "character/pet-link.ts", "character/log.ts", "character/lifetime.ts", "character/types.ts", "character/speech.ts", "character/hit.ts", "character/model-profile.ts", "character/pet-walk.ts",
+    "character/pet-link.ts", "character/log.ts", "character/lifetime.ts", "character/types.ts", "character/speech.ts", "character/hit.ts", "character/model-profile.ts", "character/pet-walk.ts", "character/rig.ts", "character/rig-live2d.ts", "character/rig-three.ts", "character/rig-three-entry.ts", "character/taa.ts", "character/taa-velocity.ts",
     "character/index.ts", "character/standalone.ts", "plugin/client.ts", "plugin/dsh-types.ts",
     "shared/settings.js", "plugin/host.js", "plugin/pet-host.js", "plugin/app-icon.js", "pet/placement.cjs", "pet/profile.cjs"
   ]

@@ -9,6 +9,8 @@ const { createPlacer } = require('./placement.cjs')
 const { chooseProfile, profileInUse } = require('./profile.cjs')
 // 소품·옷·체형 항목: 빌드가 shared/settings.js에서 만든 pet/settings.cjs (펫 앱 폴더째 런타임으로 복사된다)
 const { OUTFIT_ITEMS, BODY_TYPES } = require('./settings.cjs')
+// 3D 모델 폴더: 호스트가 보낸 폴더를 dscpet://assets/__avatar/ 로 내준다 (페이지는 시작할 때 dsc-config로 3D 여부를 받음)
+const { AVATAR_PREFIX, normalizeAvatar, avatarKey, avatarBoot, resolveInside } = require('./avatar.cjs')
 
 /** 명령줄 인자 `--이름=값`의 값 (없으면 빈 문자열) */
 const arg = (name) => { const hit = process.argv.find((option) => option.startsWith(`--${name}=`)); return hit ? hit.slice(name.length + 3) : '' }
@@ -33,12 +35,19 @@ if (MAC) {
   app.commandLine.appendSwitch('use-mock-keychain')    // 사본(ad-hoc 서명)이 DSH 의 키체인 항목을 건드려 암호 창이 뜨는 일 방지
 }
 // 프로필(캐시·로컬 저장소): macOS 는 DSH 와 따로 둔 pet-profile, 그 밖은 기본(appData/DeepSeekChan Pet).
-// 다른 DSH 가 띄운 펫이 이미 쓰는 중이면 번호 붙은 폴더로. 쓰는 중 판별 = 다른 프로세스의 LevelDB 잠금(예전 펫 포함) 또는
-// 단일 인스턴스 잠금 실패 (잠금은 userData 폴더마다 하나라 동시에 뜨는 새 펫끼리도 갈림)
+// 다른 DSH 가 띄운 펫이 이미 쓰는 중이면 번호 붙은 폴더로. 쓰는 중 판별 = 다른 프로세스의 LevelDB 잠금(Windows, 예전 펫 포함)·
+// 단일 인스턴스 잠금 링크(macOS·Linux, 잠그기 전에 확인) 또는 단일 인스턴스 잠금 실패 (잠금은 userData 폴더마다 하나라 동시에 뜨는 새 펫끼리도 갈림)
+// macOS 는 잠금을 한 번 못 잡으면 다른 폴더를 잡아도 ready 가 오지 않아(실측) 멈춘 채 남으므로, 그때는 바로 끝내고 호스트가 다음 시도에 다시 띄우게 한다
 if (!app.commandLine.hasSwitch('user-data-dir')) {
   const base = MAC ? path.join(app.getPath('appData'), 'deepseek-harness-kr', 'pet-profile') : app.getPath('userData')
   /** 프로필 폴더 잡기: 다른 프로세스가 쓰는 폴더는 건너뛰고, 아니면 그 폴더의 단일 인스턴스 잠금 @param {string} directory */
-  const claimProfile = (directory) => { if (profileInUse(directory)) return false; app.setPath('userData', directory); return app.requestSingleInstanceLock() }
+  const claimProfile = (directory) => {
+    if (profileInUse(directory)) return false
+    app.setPath('userData', directory)
+    if (app.requestSingleInstanceLock()) return true
+    if (MAC) { process.stderr.write(`dsc-pet: profile lock failed: ${directory}\n`); app.exit(1) }
+    return false
+  }
   app.setPath('userData', chooseProfile(base, claimProfile))
 }
 protocol.registerSchemesAsPrivileged([{ scheme: 'dscpet', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }])
@@ -110,7 +119,10 @@ const sendDisplay = (changed = false, point, request) => {
     displays: screen.getAllDisplays().map(displayView) })
 }
 /** 펫 창 숨기기: 클릭 받기 끄기·호스트에 hidden 알림(보이던 경우), 따라오기 멈춤, 페이지 그리기 중지, 코드가 바뀌었으면 새로 불러오기 */
-const hide = () => { if (win && !win.isDestroyed() && win.isVisible()) { win.hide(); setAccept(false); toHost({ type: 'hidden' }) } track(false); toPage({ type: 'power', on: false }); reloadIfStale() }
+const hide = () => { clearTimeout(attachTimer); if (win && !win.isDestroyed() && win.isVisible()) { win.hide(); setAccept(false); toHost({ type: 'hidden' }) } track(false); toPage({ type: 'power', on: false }); reloadIfStale() }
+// 붙은 뒤 창 안 캐릭터가 이어받을 때까지 기다리는 시간 (그 안에 호스트가 hide를 보내면 그때 숨음)
+const ATTACH_WAIT = 1000
+let attachTimer = null
 // 클릭 받기: 평소엔 뒤 화면으로 통과시키고, 커서가 캐릭터 몸 영역(box, 창 안 좌표) 안이거나 누르고 끄는 중(force)일 때만 받음.
 // 커서 위치는 여기서 직접 읽음 (Windows에서 클릭 통과 중 마우스 이동 전달(forward)이 창을 옮긴 뒤 끊겨 다시 못 집는 일이 있어서)
 let box = null, force = false, accepting = false
@@ -160,18 +172,39 @@ function reloadIfStale() { if (stale && win && !win.isDestroyed() && !win.isVisi
 require('node:fs').watchFile(path.join(ASSETS, 'dsc.js'), { interval: 2000 }, (now, before) => { if (now.mtimeMs !== before.mtimeMs) { stale = true; reloadIfStale() } })
 // 숨기라는 말을 받은 뒤 늦게 온 '자리 잡음(placed)'으로 다시 보이지 않게, 마지막 지시가 open인지 기억함
 let wanted = false
+// 3D 모델 설정: known = 호스트가 한 번이라도 알려 줌, bootedKey = 지금 페이지가 시작할 때 받은 설정 (다르면 숨어 있을 때 새로 불러옴)
+let avatar = normalizeAvatar(null), avatarKnown = false, bootedKey = null
+const avatarWaiters = []
+const AVATAR_WAIT = 3000   // 호스트가 설정을 안 보내면(예전 호스트) 이 시간 뒤 Live2D로 시작
+/** 호스트가 보낸 3D 모델 설정 반영: 처음이면 기다리던 페이지에 알려 주고, 페이지가 받은 것과 달라졌으면 새로 불러오기 예약 */
+function setAvatar(message) {
+  avatar = normalizeAvatar(message); avatarKnown = true
+  for (const resolve of avatarWaiters.splice(0)) resolve()
+  if (bootedKey !== null && avatarKey(avatar) !== bootedKey) { stale = true; reloadIfStale() }
+}
+/** 페이지 시작 설정 (호스트 설정이 올 때까지 최대 AVATAR_WAIT 기다림) */
+async function pageConfig() {
+  if (!avatarKnown) await new Promise((resolve) => { avatarWaiters.push(resolve); setTimeout(resolve, AVATAR_WAIT) })
+  bootedKey = avatarKey(avatar)
+  return { avatar: avatarBoot(avatar) }
+}
 
 /** 호스트 메시지 처리: hide 는 여기서 숨김, open 은 회차 기억 뒤 페이지로, 그 밖(cmd)은 페이지로 */
 const fromHost = (message) => {
+  if (message.type === 'avatar') return setAvatar(message)
   if (message.type === 'hide') { wanted = false; return hide() }
-  if (message.type === 'open') { wanted = true; seq = message.seq }
+  if (message.type === 'open') { wanted = true; seq = message.seq; clearTimeout(attachTimer) }
   toPage(message)   // open · cmd
 }
 
 app.whenReady().then(() => {
   // dscpet://assets/… = 플러그인 assets, dscpet://assets/__app/… = 이 앱 폴더 (페이지와 assets가 한 출처여야 Core 계산 Worker를 만들 수 있음)
-  protocol.handle('dscpet', (request) => {
+  protocol.handle('dscpet', async (request) => {
     const url = new URL(request.url), pathname = decodeURIComponent(url.pathname), own = pathname.startsWith(OWN + '/')
+    if (pathname.startsWith(AVATAR_PREFIX)) {   // 3D 모델 폴더 (폴더 실제 경로 안쪽만)
+      const file = await resolveInside(avatar.dir, pathname.slice(AVATAR_PREFIX.length))
+      return file ? net.fetch(pathToFileURL(file).toString()) : new Response('', { status: 404 })
+    }
     const root = own ? APP : ASSETS
     const file = path.join(root, own ? pathname.slice(OWN.length) : pathname)
     if (!inside(root, file)) return new Response('', { status: 404 })
@@ -201,6 +234,7 @@ app.whenReady().then(() => {
   win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => logToHost('error', `pet page failed to load: ${errorCode} ${errorDescription} ${validatedURL}`))
   win.webContents.on('devtools-opened', detachDevTools)
   win.loadURL(`dscpet://assets${OWN}/index.html`)
+  ipcMain.handle('dsc-config', (event) => (event.sender === win.webContents ? pageConfig() : null))
   ipcMain.on('dsc', (event, message) => {
     if (event.sender !== win.webContents || !message || typeof message.type !== 'string') return
     switch (message.type) {
@@ -259,9 +293,10 @@ app.whenReady().then(() => {
       }
       // 페이지가 보낸 현재 상태 (메뉴 체크 표시용). 호스트로 넘기지 않는다.
       case 'state': if (message.value && typeof message.value === 'object') menuState = { size: Number(message.value.size) || menuState.size, outfit: message.value.outfit && typeof message.value.outfit === 'object' ? message.value.outfit : menuState.outfit }; return
-      // 창 안 캐릭터가 나타나는 프레임에 숨기라고 알려 옴 (1초는 창 안 쪽이 응답하지 않을 때를 위한 대비)
-      // 곧바로 숨긴다: 창 안 캐릭터가 그리는 한 프레임까지 기다리면 두 캐릭터가 잠깐 겹쳐 보인다
-      case 'attach': wanted = false; toHost(message); hide(); return
+      // 제자리에 붙음: 창 안 캐릭터가 이 알림을 받아(최대 150ms 조회 간격) 다시 그린 프레임에 hide를 보내 올 때까지 그대로 보여 준다.
+      // 바로 숨기면 그 사이 어디에도 캐릭터가 없어 깜빡인다(실측 60~180ms). 붙은 자리는 창 안 캐릭터 자리와 같아 겹쳐도 티가 거의 안 남
+      // 창 안 쪽이 답하지 않으면(화면을 닫는 중 등) ATTACH_WAIT 뒤 스스로 숨는다
+      case 'attach': wanted = false; toHost(message); clearTimeout(attachTimer); attachTimer = setTimeout(hide, ATTACH_WAIT); return
       case 'ready': pageReady = true; for (const queued of pending.splice(0)) win.webContents.send('dsc', queued); toHost(message); return
       default: toHost(message)
     }

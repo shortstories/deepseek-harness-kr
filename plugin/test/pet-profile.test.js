@@ -47,7 +47,26 @@ test('펫 앱: --user-data-dir 가 없을 때만 쓰는 중 확인과 단일 인
   const main = await readFile(new URL('../../pet/main.cjs', import.meta.url), 'utf8')
   const block = main.slice(main.indexOf("if (!app.commandLine.hasSwitch('user-data-dir'))"))
   assert.ok(block.startsWith("if (!app.commandLine.hasSwitch('user-data-dir')) {"), '프로필 고르기가 macOS 블록 밖에 있어야 함')
-  assert.match(block, /if \(profileInUse\(directory\)\) return false; app\.setPath\('userData', directory\); return app\.requestSingleInstanceLock\(\)/)
+  assert.match(block, /if \(profileInUse\(directory\)\) return false\s+app\.setPath\('userData', directory\)\s+if \(app\.requestSingleInstanceLock\(\)\) return true/)
+  assert.match(block, /if \(MAC\) \{ process\.stderr\.write\(`dsc-pet: profile lock failed: \$\{directory\}\\n`\); app\.exit\(1\) \}/, 'macOS 는 잠금 실패 뒤 멈추지 않고 끝냄')
   assert.match(block, /app\.setPath\('userData', chooseProfile\(base, claimProfile\)\)/)
   assert.ok(main.indexOf('chooseProfile(') < main.indexOf('app.whenReady()'), 'userData 는 ready 전에 정해야 함')
+})
+
+test('singletonHeld: SingletonLock 링크가 살아 있는 다른 프로세스를 가리킬 때만 잡혀 있다고 본다 (macOS·Linux)', async () => {
+  const { singletonHeld } = await import('../../pet/profile.cjs')
+  const link = (target) => (file) => { assert.ok(file.endsWith('SingletonLock')); if (target === null) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); return target }
+  const alive = (pids) => (pid) => pids.includes(pid)
+  assert.equal(singletonHeld('P', { readlink: link('mac.local-34581'), alive: alive([34581]), self: 1 }), true)
+  assert.equal(singletonHeld('P', { readlink: link('mac.local-34581'), alive: alive([]), self: 1 }), false, '죽은 프로세스가 남긴 링크')
+  assert.equal(singletonHeld('P', { readlink: link('mac.local-7'), alive: alive([7]), self: 7 }), false, '자기 자신')
+  assert.equal(singletonHeld('P', { readlink: link(null), alive: alive([1]), self: 2 }), false, '링크 없음 (새 폴더·Windows)')
+  assert.equal(singletonHeld('P', { readlink: link('weird'), alive: () => true, self: 2 }), false, 'pid를 못 읽음')
+})
+
+test('profileInUse: 단일 인스턴스 잠금이 잡혀 있으면 LevelDB 잠금을 보지 않고 쓰는 중으로 본다', () => {
+  const read = []
+  assert.equal(profileInUse('P', (file) => read.push(file), () => true), true)
+  assert.deepEqual(read, [])
+  assert.equal(profileInUse('P', () => {}, () => false), false)
 })
