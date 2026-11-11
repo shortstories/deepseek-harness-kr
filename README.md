@@ -239,7 +239,7 @@ VRM에서도 위 항목을 적으면 기본값을 덮어씁니다(예: `gaze`, `
 | `plugin/` · `package.json` | DSH 플러그인: 호스트·설정 화면(`plugin/client.ts`)·한국어 번역(`plugin/locales.ko.json`)·빌드와 테스트 |
 | `character/` | 인앱 캐릭터 TypeScript 소스(고유 행동은 `character/behaviors/`). 빌드하면 `assets/dsc.js`와 `lib/client.js`가 만들어집니다 |
 | `assets/` | 빌드된 캐릭터 코드(`dsc.js`)·3D 렌더러 번들(`vendor/rig-three.js`), 대사(`dsc-lines.json`·`dsc-lines-ex.json`)와 Live2D 모델·테마·배경 |
-| `docs/` | 대사 추가 가이드(`dialogue-guide.md`)·대사 ex 변환 가이드(`ex-lines-guide.md`)·소개 이미지 |
+| `docs/` | 대사 추가 가이드(`dialogue-guide.md`)·캐릭터 바이블(`character-bible.md`)·대사 ex 변환 가이드(`ex-lines-guide.md`)·소개 이미지 |
 | `tools/` | 대사 파일 검사기(`check-lines.mjs`)·대사 ex 변환기(`convert-part-lines.mjs`) |
 | `lib/` | 빌드된 플러그인 클라이언트(`client.js`) |
 | `pet/` | 바깥 펫 창(Electron) 코드 |
@@ -265,7 +265,7 @@ npm test
 
 ### 대사 수정
 
-대사는 `assets/dsc-lines.json` 한 파일에 있고 런타임에 읽어 오므로 **대사만 고칠 때는 빌드가 필요 없습니다.** 상황 키·태그·길이 규칙은 [`docs/dialogue-guide.md`](docs/dialogue-guide.md)를 따르고, 고친 뒤에는 검사기를 통과시켜 주세요.
+대사는 `assets/dsc-lines.json` 한 파일에 있고 런타임에 읽어 오므로 **대사만 고칠 때는 빌드가 필요 없습니다.** 상황 키·태그·길이 규칙은 [`docs/dialogue-guide.md`](docs/dialogue-guide.md)를, 성격·말투·수위 판단 기준은 [`docs/character-bible.md`](docs/character-bible.md)를 따르고, 고친 뒤에는 검사기를 통과시켜 주세요.
 
 ```powershell
 node tools/check-lines.mjs

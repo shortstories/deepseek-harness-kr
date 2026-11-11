@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import test from 'node:test'
 import { normalizeChat } from '../chat-config.js'
-import { CHAT_ROUTE, CHAT_STATE_ROUTE, createChatHandler, createChatStateHandler, registerChatRoutes, statePayload } from '../chat-host.js'
+import { CHAT_ROUTE, CHAT_STATE_ROUTE, PROMPTS, createChatHandler, createChatStateHandler, registerChatRoutes, statePayload } from '../chat-host.js'
 
 /** Resolve once the server listens; returns its port. */
 function listen(server) {
@@ -408,4 +408,25 @@ test('the chat handler refuses a non-POST method', async () => {
   const res = { writeHead(code) { this.status = code }, end(body) { this.body = body }, on() {}, off() {} }
   await handler({ method: 'GET' }, res)
   assert.equal(res.status, 405)
+})
+
+test('the chat prompt keeps the character bible rules', () => {
+  const prompt = PROMPTS.chat
+  // 표정 태그 여덟 가지 (어지럼 포함)
+  for (const tag of ['[홍조]', '[><]', '[하트]', '[얄미운]', '[식은땀]', '[어두운]', '[눈물]', '[어지럼]']) {
+    assert.ok(prompt.includes(tag), `missing tag ${tag}`)
+  }
+  // 말투 규칙
+  assert.match(prompt, /해요체만 씁니다/)
+  assert.match(prompt, /말줄임표는 '…' 한 글자만 씁니다/)
+  assert.match(prompt, /이모지, ㅋㅋ, ㅠㅠ, \^\^는 쓰지 않습니다/)
+  assert.match(prompt, /질문으로 끝내지 않습니다/)
+  assert.match(prompt, /주인님을 탓하지 않습니다/)
+  // 수위 기준
+  assert.match(prompt, /\[수위\]/)
+  assert.match(prompt, /노골적인 행위·신체 묘사와 탈의 묘사는 하지 않습니다/)
+  assert.match(prompt, /꼬마 체형, 산책, 절전 상황에는 성적 뉘앙스를 넣지 않습니다/)
+  // 호칭과 1인칭
+  assert.match(prompt, /'주인님'/)
+  assert.match(prompt, /'저'/)
 })
